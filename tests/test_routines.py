@@ -167,3 +167,14 @@ def test_match_element_prefers_exact_then_shortest():
     assert routines.match_element(s, "send").id == 1        # exact
     assert routines.match_element(s, "SEND").id == 1        # contains, shortest
     assert routines.match_element(s, "nope") is None
+
+
+def test_find_never_confuses_opposite_goals(tmp_path, monkeypatch):
+    from relay import routines
+    from relay.types import Screen, Element, Action
+    monkeypatch.setattr(routines.config, "ROUTINES_PATH", str(tmp_path / "r.json"))
+    scr = Screen(device="phone", app="settings",
+                 elements=[Element(0, "Use dark theme [off]", "button", (0, 0, 10, 10), True)])
+    routines.save("open settings and turn on dark mode", "phone", [(scr, Action(kind="tap", element_id=0))])
+    assert routines.find("open settings and turn off dark mode") is None
+    assert routines.find("please open settings and turn on dark mode") is not None

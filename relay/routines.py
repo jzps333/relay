@@ -111,11 +111,18 @@ def _jaccard(a: str, b: str) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
+# Words that don't change what a request means.
+FILLER_WORDS = {"please", "the", "a", "an", "my", "can", "could", "you", "for", "me",
+                "hey", "relay", "okay", "ok", "now", "just", "go", "ahead"}
+
+
 def find(goal: str) -> Routine | None:
     """Return the saved routine for this goal, or None.
 
     1. Exact match after normalize().
-    2. Otherwise the most similar goal, if Jaccard similarity >= 0.8.
+    2. Otherwise a goal whose ONLY different words are filler ("please", "the",
+       "can you"...). Word overlap alone is dangerous: "turn ON dark mode" and
+       "turn OFF dark mode" share almost every word but mean the opposite.
     """
     wanted = normalize(goal)
     if not wanted:
@@ -126,12 +133,12 @@ def find(goal: str) -> Routine | None:
         if normalize(r.goal) == wanted:
             return r
 
-    best, best_score = None, 0.0
+    wanted_words = set(wanted.split())
     for r in routines:
-        score = _jaccard(wanted, normalize(r.goal))
-        if score > best_score:
-            best, best_score = r, score
-    return best if best_score >= MIN_SIMILARITY else None
+        different = wanted_words ^ set(normalize(r.goal).split())
+        if different and different <= FILLER_WORDS:
+            return r
+    return None
 
 
 # ---------------------------------------------------------------------------
