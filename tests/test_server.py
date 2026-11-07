@@ -26,7 +26,12 @@ class FakeTask:
         return self.status in ("done", "cancelled", "error")
 
     def start(self):
-        self.status = "waiting" if self.text.startswith("confirm") else "done"
+        if self.text.startswith("confirm"):
+            self.status = "waiting"
+        elif self.text.startswith("slow"):
+            self.status = "running"   # still going when the server stops waiting
+        else:
+            self.status = "done"
         return self
 
     def wait_until_settled(self, timeout):
@@ -72,7 +77,7 @@ def test_command_returns_final_answer(client):
     r = client.post("/command", json={"text": "open maps", "device": None}, headers=AUTH)
     assert r.status_code == 200
     body = r.json()
-    assert body == {"say": "Did: open maps", "audio_url": None, "needs_reply": False, "session_id": "t0"}
+    assert body == {"say": "Did: open maps", "audio_url": None, "needs_reply": False, "next": "done", "session_id": "t0"}
 
 
 def test_bad_device_rejected(client):
@@ -217,3 +222,12 @@ def test_token_rejection_explains_why(monkeypatch, capsys):
         server.require_token("Bearer 123456789\ne38Yabc")
     out = capsys.readouterr().out
     assert "expected 7" in out and "e38Yabc" not in out
+
+
+def test_next_tells_the_shortcut_what_to_do(client):
+    r = client.post("/command", json={"text": "slow task"}, headers=AUTH).json()
+    assert r["next"] == "wait" and r["needs_reply"] is False
+    r = client.post("/command", json={"text": "confirm send"}, headers=AUTH).json()
+    assert r["next"] == "reply" and r["needs_reply"] is True
+    r = client.post("/reply", json={"session_id": r["session_id"], "text": "yes"}, headers=AUTH).json()
+    assert r["next"] == "done"

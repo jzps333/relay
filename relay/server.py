@@ -108,10 +108,17 @@ def _respond(task, request: Request) -> dict:
     say = plain_text(task.say())
     audio_id = voice.speak(say)
     audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else None
+    if task.status == "waiting":
+        next_step = "reply"   # Relay asked a question: listen, then POST /reply with the answer
+    elif not task.finished:
+        next_step = "wait"    # still working: POST /reply with empty text to hear the next update
+    else:
+        next_step = "done"    # finished: stop the Shortcut
     return {
         "say": say,
         "audio_url": audio_url,
-        "needs_reply": task.status == "waiting",
+        "needs_reply": next_step == "reply",
+        "next": next_step,
         "session_id": task.id,
     }
 
@@ -194,8 +201,8 @@ def stop() -> dict:
     task = _current
     if task is not None and not task.finished:
         task.stop()
-        return {"say": "Stopping.", "audio_url": None, "needs_reply": False, "session_id": task.id}
-    return {"say": "Nothing is running.", "audio_url": None, "needs_reply": False, "session_id": ""}
+        return {"say": "Stopping.", "audio_url": None, "needs_reply": False, "next": "done", "session_id": task.id}
+    return {"say": "Nothing is running.", "audio_url": None, "needs_reply": False, "next": "done", "session_id": ""}
 
 
 @app.get("/audio/{audio_id}.mp3", dependencies=[Depends(require_token)])
