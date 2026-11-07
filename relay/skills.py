@@ -142,7 +142,11 @@ def run(name: str, params: dict, device) -> str:
             device.grant_location("com.google.android.apps.maps")
             # Put the emulator where the Mac really is (otherwise it's in California).
             from relay import location
-            location.sync_emulator_to_mac()
+            if location.sync_emulator_to_mac():
+                time.sleep(1.0)  # give the emulator's GPS a moment to report the new spot
+        # Quit Maps first: if an old route is still running, a new request just
+        # gets ignored and you keep the old directions.
+        device.close_app("maps")
         device.open_uri(f"google.navigation:q={quote(dest)}&mode={mode}", package="com.google.android.apps.maps")
         return f"Starting directions to {dest}."
 

@@ -39,7 +39,8 @@ class FakePhone:
 def test_navigate_opens_maps_intent():
     phone = FakePhone()
     said = skills.run("navigate", {"destination": "nearest Starbucks"}, phone)
-    assert phone.calls == [("uri", "google.navigation:q=nearest%20Starbucks&mode=d", "com.google.android.apps.maps")]
+    assert phone.calls == [("close", "maps"),
+                           ("uri", "google.navigation:q=nearest%20Starbucks&mode=d", "com.google.android.apps.maps")]
     assert "Starbucks" in said
 
 
