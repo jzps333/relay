@@ -40,8 +40,19 @@ class FakeDevice:
     def click(self, x, y):
         self.calls.append(("click", x, y))
 
-    def send_keys(self, text, clear=False):
-        self.calls.append(("send_keys", text, clear))
+    focused_field_exists = True
+
+    def __call__(self, **selector):
+        # d(focused=True) -> the focused field
+        fake = self
+
+        class Field:
+            exists = fake.focused_field_exists
+
+            def set_text(self, text):
+                fake.calls.append(("set_text", text))
+
+        return Field()
 
     def swipe(self, x1, y1, x2, y2, duration=None):
         self.calls.append(("swipe", x1, y1, x2, y2))
@@ -117,17 +128,24 @@ def test_tap_clicks_center():
     assert fake.calls == [("click", 200, 250)]
 
 
-def test_type_taps_then_sends_keys():
+def test_type_taps_then_sets_text():
     phone, fake = make_phone()
     screen = phone.get_screen()
     phone.act(Action(kind="type", element_id=1, text="pizza"), screen)
-    assert fake.calls == [("click", 540, 450), ("send_keys", "pizza", True)]
+    assert fake.calls == [("click", 540, 450), ("set_text", "pizza")]
 
 
 def test_type_without_element():
     phone, fake = make_phone()
     phone.act(Action(kind="type", text="hi"), phone.get_screen())
-    assert fake.calls == [("send_keys", "hi", True)]
+    assert fake.calls == [("set_text", "hi")]
+
+
+def test_type_falls_back_to_adb_input_when_no_focused_field():
+    phone, fake = make_phone()
+    fake.focused_field_exists = False
+    phone.act(Action(kind="type", text="hi from relay"), phone.get_screen())
+    assert fake.calls == [("shell", "input text hi%sfrom%srelay")]
 
 
 def test_scroll_directions():

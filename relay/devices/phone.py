@@ -155,6 +155,19 @@ def _find(screen: Screen, element_id: int | None) -> Element:
     raise ValueError(f"element {element_id} is not on this screen")
 
 
+def _adb_input_escape(text: str) -> str:
+    """`adb shell input text` needs spaces as %s and shell symbols escaped."""
+    out = []
+    for ch in text:
+        if ch == " ":
+            out.append("%s")
+        elif ch in "\\'\"`$&|;<>()*?!#~[]{}":
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 class Phone:
     """Implements the Device protocol (see base.py) for an Android emulator."""
 
@@ -186,6 +199,22 @@ class Phone:
 
     # ---- doing things ----
 
+    def _type_text(self, text: str) -> None:
+        """Type into the focused field.
+
+        Newer Android versions broke u2's send_keys(clear=True) (it crashes with
+        InputManager.getInstance). So: 1) set the focused field's text directly
+        through accessibility; 2) if that fails, fall back to `adb input text`.
+        """
+        try:
+            field = self.d(focused=True)
+            if field.exists:
+                field.set_text(text)
+                return
+        except Exception:
+            pass
+        self.d.shell(f"input text {_adb_input_escape(text)}")
+
     def act(self, action: Action, screen: Screen) -> None:
         kind = action.kind
 
@@ -198,7 +227,7 @@ class Phone:
             if action.element_id is not None:
                 x, y = _center(_find(screen, action.element_id))
                 self.d.click(x, y)
-            self.d.send_keys(action.text or "", clear=True)
+            self._type_text(action.text or "")
 
         elif kind == "scroll":
             width, height = self.d.window_size()
