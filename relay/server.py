@@ -41,10 +41,33 @@ _last_device: str | None = None        # so "scroll down" goes to the device you
 
 
 # --- auth ------------------------------------------------------------------
+def _clean_token(header: str) -> str:
+    """Forgive paste mistakes: spaces, line breaks, a missing or lowercase "Bearer"."""
+    text = "".join(header.split())          # remove ALL whitespace, incl. line breaks
+    if text.lower().startswith("bearer"):
+        text = text[len("bearer"):]
+    return text
+
+
+def _why_rejected(got: str, want: str) -> str:
+    """A hint for the server log. Never prints the token itself."""
+    if not got:
+        return "no token sent (is the Authorization header there?)"
+    if len(got) != len(want):
+        return (f"token is {len(got)} characters, expected {len(want)}. Check for extra text "
+                f"(like 123456789) or a missing part")
+    if got.lower() == want.lower():
+        return "token differs only in capital letters. iPhone autocorrect may have changed one"
+    first_diff = next(i for i, (a, b) in enumerate(zip(got, want)) if a != b)
+    return f"token is the right length but differs at character {first_diff + 1}. Re-paste it"
+
+
 def require_token(authorization: str = Header(default="")) -> None:
-    expected = f"Bearer {config.RELAY_TOKEN}"
+    want = config.RELAY_TOKEN.strip()
+    got = _clean_token(authorization)
     # compare_digest avoids leaking the token through timing differences
-    if not secrets.compare_digest(authorization.encode(), expected.encode()):
+    if not want or not secrets.compare_digest(got.encode(), want.encode()):
+        print(f"[auth] rejected: {_why_rejected(got, want)}")
         raise HTTPException(status_code=401, detail="bad or missing token")
 
 

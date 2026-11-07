@@ -199,3 +199,21 @@ def test_banner_warns_on_weak_token():
 def test_lan_ips_never_raises():
     ips = server.lan_ips()
     assert isinstance(ips, list) and all(not ip.startswith("127.") for ip in ips)
+
+
+def test_token_forgives_paste_mistakes(monkeypatch):
+    from relay import server
+    monkeypatch.setattr(server.config, "RELAY_TOKEN", "e38Yabc")
+    for header in ["Bearer e38Yabc", "bearer e38Yabc", "Bearer  e38Yabc ", "Bearer\ne38Yabc", "e38Yabc"]:
+        server.require_token(header)  # no exception
+
+
+def test_token_rejection_explains_why(monkeypatch, capsys):
+    import pytest
+    from fastapi import HTTPException
+    from relay import server
+    monkeypatch.setattr(server.config, "RELAY_TOKEN", "e38Yabc")
+    with pytest.raises(HTTPException):
+        server.require_token("Bearer 123456789\ne38Yabc")
+    out = capsys.readouterr().out
+    assert "expected 7" in out and "e38Yabc" not in out
