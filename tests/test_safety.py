@@ -153,3 +153,14 @@ def test_picking_a_recipient_is_not_a_send():
                            Element(1, "Send SMS", "button", (0, 0, 1, 1), True)])
     assert safety.needs_confirmation(Action(kind="tap", element_id=0), scr) is None
     assert safety.needs_confirmation(Action(kind="tap", element_id=1), scr) is not None
+
+
+def test_follow_and_block_need_confirmation():
+    from relay import safety
+    from relay.types import Screen, Element, Action
+    scr = Screen(device="phone", app="com.instagram.android",
+                 elements=[Element(0, "Follow", "button", (0, 0, 1, 1), True),
+                           Element(1, "Block", "button", (0, 0, 1, 1), True),
+                           Element(2, "Following", "button", (0, 0, 1, 1), True)])
+    assert safety.needs_confirmation(Action(kind="tap", element_id=0), scr)
+    assert safety.needs_confirmation(Action(kind="tap", element_id=1), scr)

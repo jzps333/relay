@@ -145,7 +145,8 @@ def is_stop(utterance: str) -> bool:
 # Tapping a button with one of these words does something you can't undo.
 _RISKY_TAP = (
     r"\b(?:send|post|pay|buy|place\s+order|order\s+now|checkout|check\s+out|"
-    r"confirm|delete|remove|call|transfer|submit|share|purchase|book\s+now)\b"
+    r"confirm|delete|remove|call|transfer|submit|share|purchase|book\s+now|"
+    r"follow|unfollow|block|unblock|report|request)\b"
 )
 
 # Fields we must NEVER type into for the user.
