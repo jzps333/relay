@@ -246,10 +246,27 @@ def startup_banner(ips: list[str], token: str, port: int = PORT) -> str:
 
 
 def main() -> None:
+    import argparse
+
     import uvicorn  # installed with FastAPI's server extras (see requirements.txt)
 
+    parser = argparse.ArgumentParser(description="Run the Relay server.")
+    parser.add_argument("--tunnel", action="store_true",
+                        help="also open a public https link with Cloudflare (needs: brew install cloudflared)")
+    args = parser.parse_args()
+
     print(startup_banner(lan_ips(), config.RELAY_TOKEN))
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    proc = None
+    if args.tunnel:
+        from relay import tunnel
+        print("[tunnel] starting Cloudflare tunnel...")
+        proc, url = tunnel.start(PORT)
+        print(tunnel.banner(url, config.RELAY_TOKEN))
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=PORT)
+    finally:
+        if proc is not None:
+            proc.terminate()  # close the public link when the server stops
 
 
 if __name__ == "__main__":

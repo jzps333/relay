@@ -4,6 +4,21 @@ The Shortcut is the whole iPhone app. It listens to you, sends your words to the
 You build it once in the **Shortcuts** app (about 10 minutes). Action names in **bold** are exactly what you
 type into the search bar at the bottom of the shortcut editor.
 
+## Easiest: a public link with Cloudflare (works with your VPN on, at hackathons, on cellular)
+
+If the iPhone can't reach the Mac's Wi-Fi address (a VPN like Tailscale on the phone, or Wi-Fi that
+blocks devices from seeing each other), use a tunnel instead:
+
+1. On the Mac, once: `brew install cloudflared`
+2. Start Relay with the tunnel: `python -m relay.server --tunnel`
+3. It prints a **PUBLIC LINK** like `https://random-words.trycloudflare.com`. Test
+   `https://random-words.trycloudflare.com/health` on the iPhone (any browser; it's https, so Brave and
+   Safari are happy).
+4. Use that link as the `Server` Text in step 3 of the Shortcut.
+
+The free link changes each time you restart, so update the `Server` Text when it does. Every request
+still needs your token, so strangers who find the link just get "401".
+
 ## 0. Before you start (on the Mac)
 
 1. Put a long random `RELAY_TOKEN` in `.env`. To make one:
