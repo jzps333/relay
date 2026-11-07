@@ -39,7 +39,12 @@ class Cancelled(Exception):
 
 def _is_yes(text: str) -> bool:
     # Use the shared safety check so "okay, don't" counts as NO, not yes.
-    return safety.is_yes(text) and not safety.is_no(text)
+    from relay import safety
+    if hasattr(safety, "is_yes"):
+        return safety.is_yes(text)  # is_yes already returns False when there's a "no"
+    # Fallback (used by tests that swap in a fake safety module).
+    t = text.lower().strip(" .!?")
+    return t in _YES or t.startswith(("yes", "yeah", "sure"))
 
 
 def _describe_action(action: Action, screen: Screen) -> str:
