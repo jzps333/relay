@@ -56,9 +56,49 @@ def start(port: int, timeout: float = 30.0) -> tuple[subprocess.Popen | None, st
     return proc, (found[0] if found else None)
 
 
-def banner(url: str | None, token: str) -> str:
+def start_ngrok(port: int, timeout: float = 20.0) -> tuple[subprocess.Popen | None, str | None]:
+    """Start ngrok. Free accounts get ONE permanent link (xyz.ngrok-free.app), so the
+    Shortcut never needs updating. One-time setup: free account at ngrok.com, then
+    `brew install ngrok` and `ngrok config add-authtoken <your token>`.
+    """
+    import json
+    import urllib.request
+
+    exe = shutil.which("ngrok")
+    if exe is None:
+        return None, None
+    proc = subprocess.Popen([exe, "http", str(port), "--log", "stdout"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # ngrok reports its public link on a small local web page (port 4040).
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and proc.poll() is None:
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=2) as r:
+                for t in json.load(r).get("tunnels", []):
+                    if str(t.get("public_url", "")).startswith("https://"):
+                        return proc, t["public_url"]
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return proc, None
+
+
+def start_auto(port: int, prefer: str = "auto") -> tuple[subprocess.Popen | None, str | None, str]:
+    """Pick a tunnel: ngrok (permanent link) if installed, else Cloudflare (link changes)."""
+    if prefer in ("auto", "ngrok") and shutil.which("ngrok"):
+        proc, url = start_ngrok(port)
+        if url or prefer == "ngrok":
+            return proc, url, "ngrok"
+        if proc is not None:
+            proc.terminate()
+    proc, url = start(port)
+    return proc, url, "cloudflare"
+
+
+def banner(url: str | None, token: str, kind: str = "cloudflare") -> str:
     if url is None:
-        return ("\n[tunnel] No public link yet. Is cloudflared installed?  brew install cloudflared\n"
+        return ("\n[tunnel] No public link yet. Install one:  brew install ngrok  (permanent link)\n"
+                "         or  brew install cloudflared  (link changes each restart)\n"
                 "         (The server still works on your Wi-Fi address above.)\n")
     short = (token[:4] + "…") if token else "(not set!)"
     return (
@@ -67,6 +107,8 @@ def banner(url: str | None, token: str) -> str:
         f"    Shortcut server address:  {url}\n"
         f"    Test on the iPhone:       {url}/health\n"
         f"    Token: Bearer {short}\n"
-        "This link changes every time you restart. Update the Shortcut's Server text.\n"
+        + ("This link stays the same every time (ngrok). Set it in the Shortcut once.\n"
+           if kind == "ngrok" else
+           "This link changes every time you restart. For a permanent one: brew install ngrok\n")
         + "=" * 60 + "\n"
     )

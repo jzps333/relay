@@ -274,17 +274,17 @@ def main() -> None:
     import uvicorn  # installed with FastAPI's server extras (see requirements.txt)
 
     parser = argparse.ArgumentParser(description="Run the Relay server.")
-    parser.add_argument("--tunnel", action="store_true",
-                        help="also open a public https link with Cloudflare (needs: brew install cloudflared)")
+    parser.add_argument("--tunnel", nargs="?", const="auto", choices=["auto", "ngrok", "cloudflare"],
+                        help="also open a public https link: ngrok (same link every time) or cloudflare")
     args = parser.parse_args()
 
     print(startup_banner(lan_ips(), config.RELAY_TOKEN))
     proc = None
     if args.tunnel:
         from relay import tunnel
-        print("[tunnel] starting Cloudflare tunnel...")
-        proc, url = tunnel.start(PORT)
-        print(tunnel.banner(url, config.RELAY_TOKEN))
+        print("[tunnel] starting public link...")
+        proc, url, kind = tunnel.start_auto(PORT, args.tunnel)
+        print(tunnel.banner(url, config.RELAY_TOKEN, kind))
     try:
         uvicorn.run(app, host="0.0.0.0", port=PORT)
     finally:
