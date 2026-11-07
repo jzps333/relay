@@ -9,7 +9,7 @@ from __future__ import annotations
 import base64
 import json
 
-from relay import config
+from relay import config, playbooks
 from relay.types import Action, Screen
 
 # Every kind of action the devices understand (mirrors relay.types.Action.kind).
@@ -206,16 +206,16 @@ def parse_action(data: dict) -> Action:
 
 def pick_action(goal: str, subgoal: str, screen: Screen, history: list[Action]) -> Action:
     """Ask Claude for the single next action (forced choose_action tool call)."""
-    content: list[dict] = [
-        {
-            "type": "text",
-            "text": (
-                f"Goal: {goal}\nCurrent sub-goal: {subgoal}\n\n"
-                f"Screen elements:\n{screen.as_prompt()}\n\n"
-                f"Last actions:\n{_history_text(history)}"
-            ),
-        }
-    ]
+    text = (
+        f"Goal: {goal}\nCurrent sub-goal: {subgoal}\n\n"
+        f"Screen elements:\n{screen.as_prompt()}\n\n"
+        f"Last actions:\n{_history_text(history)}"
+    )
+    # If we have a playbook for the app on screen, add its tips (see relay/playbooks.py).
+    tips = playbooks.tips_for(screen.app)
+    if tips:
+        text += f"\n\nTips for this app:\n{tips}"
+    content: list[dict] = [{"type": "text", "text": text}]
     if screen.screenshot_png:
         content.append(_image_block(screen.screenshot_png))
 
