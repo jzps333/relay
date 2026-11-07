@@ -1,92 +1,153 @@
 # Building the "Relay" iPhone Shortcut
 
-The Shortcut is the whole iPhone app: it listens, sends the words to the Mac, and speaks the answer.
-Build it in the **Shortcuts** app. Every action name below is exactly what you type in the action search bar.
+The Shortcut is the whole iPhone app. It listens to you, sends your words to the Mac, and speaks the answer.
+You build it once in the **Shortcuts** app (about 10 minutes). Action names in **bold** are exactly what you
+type into the search bar at the bottom of the shortcut editor.
 
-You need:
-- The Mac's address, e.g. `http://192.168.1.20:8000` (same Wi-Fi) or `http://relay-mac:8000` (Tailscale, see below).
-  Find the Wi-Fi IP on the Mac: System Settings -> Wi-Fi -> Details -> IP address.
-- Your `RELAY_TOKEN` from `.env`.
+## 0. Before you start (on the Mac)
 
-## 1. Create it
+1. Put a long random `RELAY_TOKEN` in `.env`. To make one:
+   `python -c "import secrets; print(secrets.token_urlsafe(24))"`
+2. Start the server with:
+   ```bash
+   python -m relay.server
+   ```
+   It prints something like:
+   ```
+   Put this URL in the iPhone Shortcut (Get Contents of URL):
+       http://192.168.1.20:8000/command
+   Test from the iPhone in Safari (must say "ok": true):
+       http://192.168.1.20:8000/health
+   ```
+   Write down the `http://192.168.1.20:8000` part (yours will differ). That is your **server address**.
+   If it shows a big WARNING about the token, fix `.env` first and restart.
+3. The first time, macOS may pop up *"Do you want the application Python to accept incoming network
+   connections?"* Click **Allow**. If you miss it, see Troubleshooting.
 
-1. Shortcuts -> **+** (top right). Tap the name at the top -> **Rename** -> `Relay`.
-   (The name is what Siri listens for: "Hey Siri, Relay".)
+## 1. Test the connection first (30 seconds, saves a lot of pain)
 
-## 2. Set up two variables (so you only type them once)
+1. Make sure the iPhone is on the **same Wi-Fi** as the Mac.
+2. On the iPhone, open **Safari** and go to `http://<your server address>/health`,
+   e.g. `http://192.168.1.20:8000/health`.
+3. You should see `{"ok":true,"device_default":"phone","emulator_connected":true}`.
+   - `emulator_connected: false` is OK for now; it only means the Android emulator isn't running yet.
+   - If the page doesn't load, stop and go to **Troubleshooting**. The Shortcut won't work until this does.
 
-2. Add **Text**. Type your server address, e.g. `http://192.168.1.20:8000` (no slash at the end).
-3. Add **Set Variable**. Variable name: `Server`. Input: the Text above.
-4. Add **Text**. Type `Bearer ` (with a space) followed by your token, e.g. `Bearer pick-a-long-random-string`.
-5. Add **Set Variable**. Name: `Auth`.
+## 2. Create the shortcut and name it
 
-## 3. Listen and send
+1. Open **Shortcuts** -> **+** (top right).
+2. Tap the name at the top -> **Rename** -> type `Relay` -> **Done**.
+   The name is what Siri listens for, so later you just say **"Hey Siri, Relay"**.
 
-6. Add **Dictate Text**. Tap the arrow: Language = English, **Stop Listening = After Pause**.
-7. Add **Get Contents of URL**.
-   - URL: tap and insert `Server`, then type `/command` right after it.
-   - Tap **Show More**: Method = **POST**.
-   - Headers: **Add new header** -> Key `Authorization`, Value = the `Auth` variable.
-   - Request Body = **JSON**. Add field: Type **Text**, Key `text`, Value = **Dictated Text** (magic variable).
-   - (Optional) Add field Key `device`, Text `mac` — only in a second "Relay Mac" shortcut. Leave it out
-     here; the server guesses from words like "on my Mac".
-8. Add **Set Variable**. Name: `Response`. Input: Contents of URL.
+## 3. Save your address and token in variables (type them only once)
 
-## 4. Speak the answer, then keep going while it has a question
+1. Add **Text**. Type your server address, e.g. `http://192.168.1.20:8000` (no `/` at the end).
+2. Add **Set Variable**. Tap *Variable Name* -> type `Server`. (Its input is the Text above.)
+3. Add **Text**. Type `Bearer `, **with one space after it**, then your token.
+   Example: `Bearer pick-a-long-random-string`
+4. Add **Set Variable**. Name it `Auth`.
 
-9. Add **Repeat**. Set it to **10** times. (Repeat = "keep answering questions"; we exit early when done.)
-   Everything in steps 10-19 goes **inside** the Repeat.
-10. Add **Get Dictionary Value**. Get **Value** for key `say` in `Response`. Then **Set Variable** `Say`.
-11. Add **Get Dictionary Value**: key `audio_url` in `Response`.
-12. Add **If**: Input = that Dictionary Value, condition **has any value**.
-    - Inside the If: **Get Contents of URL** -> URL = the Dictionary Value (`audio_url`),
-      Method GET, header `Authorization` = `Auth`. Then **Play Sound** (input: Contents of URL).
-    - **Otherwise**: **Speak Text** with `Say`. (This is the fallback when no ElevenLabs key is set.
-      Tap the arrow and turn **Wait Until Finished** on.)
-    - **End If**.
-13. Add **Get Dictionary Value**: key `needs_reply` in `Response`.
-14. Add **If** that value **is** `1` (Shortcuts shows JSON `true` as 1; if your iOS shows "Yes/No",
-    pick **is true**).
-15. Inside it: **Dictate Text** (Stop Listening = After Pause).
-16. **Get Dictionary Value**: key `session_id` in `Response`.
-17. **Get Contents of URL**: URL = `Server` + `/reply`, Method **POST**, header `Authorization` = `Auth`,
-    JSON body: `session_id` = the session_id value, `text` = the new Dictated Text.
-18. **Set Variable** `Response` = that Contents of URL (overwrites the old one, so the next loop speaks it).
-19. **Otherwise**: add **Stop This Shortcut** (no question means we're finished). **End If**.
-20. **End Repeat** is added for you.
+## 4. Listen and send your words
 
-Tip: if a long task replies "I'm still working on it", just answer anything like "okay" — any `/reply`
-on a running task waits another 25 seconds and gives you the newest update.
+1. Add **Dictate Text**. Tap the small arrow on it: Language = English, **Stop Listening = After Pause**.
+2. Add **Get Contents of URL**.
+   - Tap *URL* -> insert the `Server` variable -> type `/command` right after it
+     (it should read `Server/command`).
+   - Tap the arrow / **Show More**.
+   - **Method**: `POST`.
+   - **Headers**: tap **Add new header** -> Key `Authorization`, Value -> insert the `Auth` variable.
+   - **Request Body**: `JSON`. Tap **Add new field** -> **Text** -> Key `text`,
+     Value -> insert **Dictated Text**.
+3. Add **Set Variable**. Name it `Response`. (Input: Contents of URL.)
 
-## 5. Optional: a "Relay Stop" shortcut
+The server answers with JSON like:
+`{"say": "Opened Maps.", "audio_url": "http://192.168.1.20:8000/audio/ab12cd.mp3", "needs_reply": false, "session_id": "a1b2"}`
+`say` is always plain text, ready for Speak Text. `audio_url` is empty unless you set an ElevenLabs key.
 
-New shortcut named `Relay Stop`: **Get Contents of URL** -> `Server` + `/stop`, POST, `Authorization` header.
-Then "Hey Siri, Relay Stop" kills whatever is running. (Saying "stop" as a new command also works.)
+## 5. Speak the answer, and answer its questions
 
-## 6. "Hey Siri, Relay"
+Relay sometimes asks "Send this to Mom?". A **Repeat** lets you answer and hear the next reply.
 
-- Settings -> Siri -> **Listen for "Hey Siri"** (or "Siri") on. The shortcut name is the trigger, so just say
-  **"Hey Siri, Relay"**. With AirPods in, that works with the phone in your pocket.
-- Settings -> Siri -> **Allow Siri When Locked** on, so it works from the lock screen.
-- Extra hands-free options: Settings -> Accessibility -> Touch -> **Back Tap** -> Double Tap -> Relay,
-  or iPhone 15 Pro and later: Settings -> **Action Button** -> Shortcut -> Relay.
-- First run: iOS asks "Allow Relay to connect to 192.168.x.x?" — tap **Always Allow** (do this once
-  with someone sighted nearby, or with VoiceOver).
+1. Add **Repeat**. Set it to **10** times. Put **every action in steps 2-9 inside the Repeat**
+   (drag them between *Repeat* and *End Repeat*).
+2. Add **Get Dictionary Value** -> *Get* **Value** *for* `say` *in* `Response`.
+   Then add **Set Variable** -> name `Say`.
+3. Add **Get Dictionary Value** -> **Value** for `audio_url` in `Response`.
+4. Add **If**. Input: that Dictionary Value. Condition: **has any value**.
+   - Inside **If**: add **Get Contents of URL**. URL = the Dictionary Value (`audio_url`).
+     Show More: Method `GET`, header `Authorization` = `Auth`. Then add **Play Sound**
+     (input: Contents of URL).
+   - Inside **Otherwise**: add **Speak Text** with `Say`. (If you see **Wait Until Finished**, turn it on.)
+     This is the built-in iPhone voice, used whenever there's no ElevenLabs audio.
+   - **End If** is added for you.
+5. Add **Get Dictionary Value** -> **Value** for `needs_reply` in `Response`.
+6. Add **If**: that value **is** `1`. (Shortcuts shows JSON `true` as `1`. If your iOS offers
+   **is true** / **Yes**, pick that instead.)
+7. Inside this **If**:
+   1. **Dictate Text** (Stop Listening = After Pause).
+   2. **Get Dictionary Value** -> **Value** for `session_id` in `Response`.
+   3. **Get Contents of URL**: URL = `Server` + `/reply`. Method `POST`, header `Authorization` = `Auth`.
+      Request Body `JSON` with two Text fields:
+      `session_id` = the session_id Dictionary Value, `text` = the new **Dictated Text**.
+   4. **Set Variable** -> `Response` (input: this new Contents of URL). This replaces the old reply,
+      so the next time around the Repeat speaks the new answer.
+8. Inside **Otherwise**: add **Stop This Shortcut** (no question = we're finished).
+9. **End If**, then **End Repeat** (both added for you).
 
-## 7. Tailscale: works when the phone is off the Mac's Wi-Fi
+Tip: if a long task says "...I'm still working on it", answer anything ("okay"). Any `/reply` on a
+running task waits up to 25 more seconds and tells you the newest update.
 
-Tailscale makes a private network between your devices, so the phone reaches the Mac from cellular
-or any Wi-Fi without opening ports on the router.
+## 6. Run it
 
-1. Mac: install Tailscale (tailscale.com/download or the Mac App Store), sign in.
-2. iPhone: install **Tailscale** from the App Store, sign in with the **same account**, turn the VPN toggle on.
+1. Tap the play button at the bottom of the editor and say "what's on my screen?".
+2. The first time, iOS asks **"Allow Relay to connect to 192.168.x.x?"** -> tap **Always Allow**.
+   Do this once with the phone unlocked (with VoiceOver, or with someone sighted nearby).
+3. Now try **"Hey Siri, Relay"**.
+
+## 7. Hands-free options
+
+- Settings -> Siri -> **Listen for "Hey Siri"** (or "Siri") on. With AirPods in, it works with the phone
+  in your pocket.
+- Settings -> Siri -> **Allow Siri When Locked** on.
+- Settings -> Accessibility -> Touch -> **Back Tap** -> Double Tap -> **Relay**.
+- iPhone 15 Pro and later: Settings -> **Action Button** -> Shortcut -> **Relay**.
+
+To be honest about limits: from the lock screen, iOS may still say "unlock your iPhone to continue" for
+some actions, especially the first run, the "Allow Relay to connect" prompt, and sometimes playing audio.
+If that keeps happening, unset the ElevenLabs key (Speak Text is the most lock-screen-friendly), or unlock
+with Face ID when asked.
+
+## 8. Optional: "Relay Stop"
+
+New shortcut named `Relay Stop`: **Get Contents of URL** -> `Server` + `/stop`, Method `POST`,
+header `Authorization` = `Auth`. "Hey Siri, Relay Stop" cancels whatever is running.
+(Saying "stop" as a normal Relay command works too.)
+
+## Troubleshooting
+
+| What you see | What it means / fix |
+|---|---|
+| `/health` won't load in Safari, or the Shortcut says "could not connect" / times out | 1) Phone and Mac on the **same Wi-Fi** (not guest Wi-Fi, not cellular). 2) The server is running (`python -m relay.server` in a Terminal you left open). 3) **Wrong IP**: the Mac's IP can change; restart the server and copy the address it prints, then fix the `Server` Text in the shortcut. 4) The macOS firewall, below. |
+| You never clicked "Allow" for Python | System Settings -> Network -> **Firewall** -> Options. Find Python and set it to **Allow incoming connections** (or turn the firewall off to test). Then restart the server. |
+| Error **401** / "bad or missing token" | Token mismatch. The `Auth` Text must be exactly `Bearer ` + the token in `.env` (one space, no quotes, no extra space at the end). The server prints the first 4 characters to compare. Restart the server after editing `.env`. |
+| Error **404** on `/reply` ("unknown session_id") | The server restarted mid-conversation. Just start over with "Hey Siri, Relay". |
+| `/health` works in Safari but the Shortcut fails | Check the URL is `Server/command` (no double `//`), Method is **POST**, Request Body is **JSON** with key `text` (lowercase). |
+| It speaks "Done." / nothing useful, or you hear silence | Check the `say` key spelling. If ElevenLabs audio is silent, delete the ElevenLabs key in `.env` and it will use Speak Text. |
+| `emulator_connected: false` | Start the emulator (Android Studio -> Device Manager -> play) and check `adb devices` lists it. |
+| Works at home, not elsewhere | Expected on plain Wi-Fi. Use Tailscale (next section). |
+
+## Tailscale: works when the phone is off the Mac's Wi-Fi
+
+Tailscale makes a private network between your devices, so the phone reaches the Mac from cellular or any
+Wi-Fi without opening ports on your router.
+
+1. Mac: install Tailscale (tailscale.com/download or the Mac App Store) and sign in.
+2. iPhone: install **Tailscale** from the App Store, sign in with the **same account**, turn the VPN on.
 3. In the Tailscale admin page (login.tailscale.com -> Machines) find the Mac's name or `100.x.y.z` IP.
    Turn on **MagicDNS** (DNS tab) so you can use the name.
-4. In the Shortcut, change the `Server` Text (step 2) to `http://<mac-name>:8000` or `http://100.x.y.z:8000`.
-   This works on home Wi-Fi too, so you only need one version of the shortcut.
-5. Make sure the server listens on all interfaces: `uvicorn relay.server:app --host 0.0.0.0 --port 8000`.
-   If macOS asks to allow incoming connections for Python, click **Allow**.
-6. Keep the Mac awake: System Settings -> Battery/Energy -> "Prevent automatic sleeping when the display
-   is off", or run `caffeinate -dis` in a terminal.
+4. Change the `Server` Text (step 3) to `http://<mac-name>:8000` or `http://100.x.y.z:8000`.
+   Test `/health` in Safari again. This also works at home, so you only need one shortcut.
+5. Keep the Mac awake: System Settings -> Battery/Energy -> "Prevent automatic sleeping when the display
+   is off", or run `caffeinate -dis` in a Terminal.
 
-Keep `RELAY_TOKEN` long and random even on Tailscale; this server can tap, type and call on your behalf.
+Keep `RELAY_TOKEN` long and random even on Tailscale: this server can tap, type and call on your behalf.

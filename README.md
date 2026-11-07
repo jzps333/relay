@@ -28,7 +28,7 @@ For Mac control, give your terminal **Accessibility** and **Screen Recording** p
 Run the server:
 
 ```bash
-uvicorn relay.server:app --host 0.0.0.0 --port 8000
+python -m relay.server   # prints the URL to put in your iPhone Shortcut
 ```
 
 Try it without the phone:
