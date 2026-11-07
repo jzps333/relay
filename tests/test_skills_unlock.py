@@ -85,7 +85,7 @@ def test_route_screen_agent_means_none(monkeypatch):
 
 def test_route_skips_mac_and_missing_key(monkeypatch):
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "")
-    assert skills.route("open spotify", "phone") is None
+    assert skills.route("open spotify and play my workout playlist", "phone") is None  # not a keyword command
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
     assert skills.route("open spotify", "mac") is None
 

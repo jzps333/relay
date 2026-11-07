@@ -16,6 +16,7 @@ picks a skill (with its details) or says "screen_agent" for everything else
 from __future__ import annotations
 
 import logging
+import re
 import time
 from urllib.parse import quote
 
@@ -99,12 +100,151 @@ ROUTER_SYSTEM = (
 SKILL_NAMES = {t["name"] for t in SKILL_TOOLS} - {"screen_agent"}
 
 
+# ---------------------------------------------------------------------------
+# Keyword fast path: obvious commands skip the ~2 s router call.
+# ---------------------------------------------------------------------------
+# The rule here is "when in doubt, return None". A miss only costs the 2 s
+# router call; a wrong match does the wrong thing on the user's phone.
+
+# Polite words people say before the real command: "hey relay, can you pause".
+_LEADING_FILLER = re.compile(
+    r"^(?:hey relay|ok relay|okay relay|relay|hey|ok|okay|please|"
+    r"can you|could you|would you|will you|just)\b[\s,]*",
+    re.I,
+)
+# ...and after it: "pause the music please".
+_TRAILING_FILLER = re.compile(r"[\s,]*\b(?:please|thanks|thank you|now)$", re.I)
+
+# Whole commands that map straight to a skill. The text must match EXACTLY
+# (after filler is removed), so "play my liked songs" never matches "play".
+_EXACT = {
+    # media
+    "pause": ("media", {"action": "pause"}),
+    "pause music": ("media", {"action": "pause"}),
+    "pause the music": ("media", {"action": "pause"}),
+    "pause the song": ("media", {"action": "pause"}),
+    "stop the music": ("media", {"action": "pause"}),
+    "stop music": ("media", {"action": "pause"}),
+    "play": ("media", {"action": "play"}),
+    "resume": ("media", {"action": "play"}),
+    "resume music": ("media", {"action": "play"}),
+    "resume the music": ("media", {"action": "play"}),
+    "unpause": ("media", {"action": "play"}),
+    "next": ("media", {"action": "next"}),
+    "next song": ("media", {"action": "next"}),
+    "next track": ("media", {"action": "next"}),
+    "skip": ("media", {"action": "next"}),
+    "skip song": ("media", {"action": "next"}),
+    "skip this song": ("media", {"action": "next"}),
+    "skip the song": ("media", {"action": "next"}),
+    "skip track": ("media", {"action": "next"}),
+    "previous": ("media", {"action": "previous"}),
+    "previous song": ("media", {"action": "previous"}),
+    "previous track": ("media", {"action": "previous"}),
+    "go back a song": ("media", {"action": "previous"}),
+    # volume
+    "volume up": ("volume", {"direction": "up"}),
+    "volume down": ("volume", {"direction": "down"}),
+    "turn it up": ("volume", {"direction": "up"}),
+    "turn it down": ("volume", {"direction": "down"}),
+    "turn the volume up": ("volume", {"direction": "up"}),
+    "turn the volume down": ("volume", {"direction": "down"}),
+    "turn up the volume": ("volume", {"direction": "up"}),
+    "turn down the volume": ("volume", {"direction": "down"}),
+    "louder": ("volume", {"direction": "up"}),
+    "quieter": ("volume", {"direction": "down"}),
+    "mute": ("volume", {"direction": "mute"}),
+}
+
+# "open spotify", "launch the google maps app". Group 2 = the app name:
+# 1 to 3 words, and the pattern must reach the END of the text ($), so
+# anything extra after the app name means no match.
+_APP_WORD = r"[a-z0-9][a-z0-9.'&+-]*"
+_APP_NAME = rf"({_APP_WORD}(?:\s+{_APP_WORD}){{0,2}}?)"
+_OPEN = re.compile(rf"^(?:open|launch)\s+(?:the\s+)?{_APP_NAME}(?:\s+app)?$", re.I)
+_CLOSE = re.compile(rf"^(?:close|quit|exit)\s+(?:out of\s+)?(?:the\s+)?{_APP_NAME}(?:\s+app)?$", re.I)
+
+# Words that never appear in an app name but DO show up in multi-part or
+# in-app requests ("open my email", "open spotify and play...", "open chat with mom").
+_NOT_APP_WORDS = {"and", "then", "to", "on", "in", "with", "for", "my", "a", "an", "the",
+                  "at", "of", "from", "it", "this", "that", "all", "everything", "me",
+                  "up", "your", "his", "her", "our", "their",
+                  # Things you open/close that aren't apps ("exit navigation", "close tabs").
+                  "navigation", "directions", "tab", "tabs", "window", "windows",
+                  "notifications", "keyboard"}
+
+# "navigate to Starbucks", "take me to 123 Main St". Group 1 = destination.
+_NAVIGATE = re.compile(r"^(?:navigate to|take me to|get directions to|directions to|drive to)\s+(.+)$", re.I)
+# A destination containing these is probably a two-part request
+# ("navigate to work and text mom I'm on my way"), so let the LLM decide.
+_MULTI_PART = re.compile(r"\b(?:and|then|also|after|text|call|message|tell|send)\b|[,;]", re.I)
+
+
+def _clean(goal: str) -> str:
+    """Remove filler words and end punctuation; keep the original letter case."""
+    text = " ".join(goal.split())  # collapse extra spaces
+    while True:
+        before = text
+        text = text.strip(" .!?,")
+        text = _LEADING_FILLER.sub("", text)
+        text = _TRAILING_FILLER.sub("", text)
+        if text == before:
+            return text
+
+
+def _app_name(pattern: re.Pattern, text: str) -> str | None:
+    """App name if `text` is exactly "<verb> <app name>", else None."""
+    m = pattern.match(text)
+    if not m:
+        return None
+    app = m.group(1).lower()
+    if any(word in _NOT_APP_WORDS for word in app.split()):
+        return None
+    return app
+
+
+def match_keywords(goal: str) -> tuple[str, dict] | None:
+    """Instantly recognise obvious one-step commands, no AI needed.
+
+    Returns (skill_name, params) in the same shape as route(), or None if the
+    goal isn't an obvious single command (then the LLM router decides).
+    """
+    text = _clean(goal)
+    if not text:
+        return None
+    result = None
+
+    exact = _EXACT.get(text.lower())
+    if exact is not None:
+        name, params = exact
+        result = (name, dict(params))  # copy so callers can't change the table
+    elif (app := _app_name(_OPEN, text)) is not None:
+        result = ("open_app", {"app": app})
+    elif (app := _app_name(_CLOSE, text)) is not None:
+        result = ("close_app", {"app": app})
+    elif (m := _NAVIGATE.match(text)) and not _MULTI_PART.search(m.group(1)):
+        destination = m.group(1).strip(" .!?,")
+        if destination:
+            result = ("navigate", {"destination": destination})
+
+    if result is not None:
+        log.info("keyword match %s %s", result[0], result[1])
+    return result
+
+
 def route(goal: str, device_name: str) -> tuple[str, dict] | None:
     """Return (skill_name, params) if a skill can do the whole goal, else None.
 
-    Any error (no key, network) returns None so Relay falls back to the normal loop.
+    Obvious commands are matched by keywords first (instant, works without a
+    key). Everything else asks the fast LLM router. Any error (no key,
+    network) returns None so Relay falls back to the normal loop.
     """
-    if device_name != "phone" or not config.ANTHROPIC_API_KEY:
+    if device_name != "phone":
+        return None
+    picked = match_keywords(goal)
+    if picked is not None:
+        return picked
+    if not config.ANTHROPIC_API_KEY:
         return None
     from relay.brains.claude import _client  # same lazily-created client
 
