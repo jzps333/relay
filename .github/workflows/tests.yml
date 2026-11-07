@@ -40,7 +40,15 @@ jobs:
         run: |
           if [ -z "$URL" ]; then echo "No Grok Bot webhook set, skipping."; exit 0; fi
           python - <<'PY'
-          import json, os, urllib.request
+          import json, os, re, urllib.request
+          # Be forgiving about what was pasted into the secrets: pull out just the
+          # https link, and just the crsr_ key (drop "Authorization: Bearer ").
+          url_match = re.search(r"https://\S+", os.environ["URL"])
+          key_match = re.search(r"crsr_[A-Za-z0-9_\-]+", os.environ["KEY"])
+          if not url_match:
+              raise SystemExit("GROK_BOT_WEBHOOK_URL must contain the https://api2.cursor.sh/... link")
+          url = url_match.group(0).strip("'\"")
+          key = key_match.group(0) if key_match else os.environ["KEY"].replace("Bearer", "").strip()
           log = open("pytest.log").read()[-6000:]  # the end has the summary and failures
           body = {
               "repo": os.environ["GITHUB_REPOSITORY"],
@@ -51,8 +59,8 @@ jobs:
               "run_url": f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
               "pytest_tail": log,
           }
-          req = urllib.request.Request(os.environ["URL"], data=json.dumps(body).encode(),
-                                       headers={"Authorization": f'Bearer {os.environ["KEY"]}',
+          req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                       headers={"Authorization": f"Bearer {key}",
                                                 "Content-Type": "application/json"})
           print(urllib.request.urlopen(req, timeout=20).read().decode())
           PY
