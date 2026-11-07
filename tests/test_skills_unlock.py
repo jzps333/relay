@@ -135,3 +135,21 @@ def test_find_blocker_none_when_clear(monkeypatch):
     phone.get_screen = lambda with_screenshot=False: Screen(device="phone", app="maps", elements=[
         Element(0, "Exit navigation", "button", (0, 0, 1, 1), True)])
     assert skills.find_blocker(phone) is None
+
+
+def test_popup_is_cleared_without_redoing_task(monkeypatch):
+    """The skill worked; a popup sits on top. Relay taps it away and stops."""
+    from relay.types import Screen, Element, Action
+    monkeypatch.setattr(skills.time, "sleep", lambda s: None)
+    monkeypatch.setattr(agent, "SETTLE_SECONDS", 0)
+    popup = Screen(device="phone", app="maps", elements=[Element(0, "No thanks", "button", (0, 0, 1, 1), True)])
+    clear = Screen(device="phone", app="maps", elements=[Element(i, f"x{i}", "text", (0, 0, 1, 1), False) for i in range(5)])
+    phone = FakePhone()
+    screens = [popup, clear]  # 1st read: pick the button; 2nd read: check it is gone
+    phone.get_screen = lambda with_screenshot=False: screens.pop(0) if len(screens) > 1 else screens[0]
+    phone.act = lambda a, s: phone.calls.append(("tap", a.element_id))
+    monkeypatch.setattr("relay.brains.picker.choose_action", lambda *a: Action("tap", element_id=0))
+    from relay import safety
+    task = agent.Task("navigate to starbucks", device_name="phone")
+    assert task._clear_popups(phone, safety, skills) is True
+    assert phone.calls == [("tap", 0)]

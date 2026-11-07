@@ -181,14 +181,22 @@ _BLOCKER_WORDS = ("skip", "sign in", "not now", "no thanks", "allow", "accept", 
 
 
 def find_blocker(device, wait: float = 2.0) -> str | None:
-    """After a skill runs, return the text of a popup/onboarding button if one is showing."""
-    time.sleep(wait)  # let the app open
-    try:
-        screen = device.get_screen()
-    except Exception:
-        return None
-    for el in screen.elements:
-        text = (el.text or "").strip().lower()
-        if el.clickable and any(text == w or text.startswith(w) for w in _BLOCKER_WORDS):
-            return el.text
-    return None
+    """After a skill runs, return the text of a popup/onboarding button if one is showing.
+
+    Checks every half second for up to `wait` seconds, so a fast app costs ~0.5 s,
+    not the full wait.
+    """
+    deadline = time.monotonic() + wait
+    while True:
+        time.sleep(min(0.5, wait))
+        try:
+            screen = device.get_screen()
+        except Exception:
+            return None
+        for el in screen.elements:
+            text = (el.text or "").strip().lower()
+            if el.clickable and any(text == w or text.startswith(w) for w in _BLOCKER_WORDS):
+                return el.text
+        # The app has drawn real content and nothing is in the way: done.
+        if len(screen.elements) > 3 or time.monotonic() >= deadline:
+            return None

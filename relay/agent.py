@@ -239,11 +239,13 @@ class Task:
                 if blocker is None:
                     return said
                 self._narrate(f"Something popped up ({blocker}), handling it")
-                self.goal = (f"{self.goal}. A shortcut already opened the right app, but a popup or "
-                             f"first-run screen is in the way. Never sign in. Skip sign-in, ads and "
-                             f"notification prompts (Skip / Not now / No thanks). But ALLOW permissions "
-                             f"the request needs (e.g. location for directions: 'While using the app'), "
-                             f"then finish the request.")
+                # Usually the shortcut already worked and a popup just sits on top.
+                # Clear ONLY the popups, then stop: don't redo the whole task.
+                if self._clear_popups(device, safety, skills):
+                    return said
+                self.goal = (f"{self.goal}. A shortcut already opened the right app, but something "
+                             f"is in the way. Never sign in. Allow permissions the request needs. "
+                             f"If the request is already happening on screen, use done right away.")
                 return self._loop(device, safety, routines, resumed=True)
 
         # 5. Saved routine?
@@ -261,6 +263,28 @@ class Task:
 
         # 6. Plan + step loop.
         return self._loop(device, safety, routines, resumed)
+
+    def _clear_popups(self, device, safety, skills, max_rounds: int = 4) -> bool:
+        """Tap away popups one at a time. True once none are left."""
+        from relay.brains import picker
+        goal = ("Dismiss the popup or first-run screen on top. Never sign in. Skip sign-in, ads and "
+                "notification prompts (Skip / Not now / No thanks). ALLOW permissions the user's "
+                f"request needs. The user's request: {self.goal}")
+        history: list[Action] = []
+        for _ in range(max_rounds):
+            self._check_stop()
+            screen = device.get_screen(with_screenshot=True)
+            action = picker.choose_action(goal, "Tap the one button that dismisses the popup", screen, history)
+            if action.kind not in ("tap", "back"):
+                break
+            if safety.needs_confirmation(action, screen):
+                return False  # a risky button: let the full loop ask the user properly
+            device.act(action, screen)
+            self._narrate(_describe_action(action, screen))
+            history.append(action)
+            if skills.find_blocker(device, wait=SETTLE_SECONDS) is None:
+                return True
+        return False
 
     def _unlock_if_needed(self, device) -> None:
         if not hasattr(device, "is_locked") or not device.is_locked():
