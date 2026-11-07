@@ -16,3 +16,4 @@ pyobjc; sys_platform == "darwin"          # Mac accessibility tree (macOS only)
 
 # Tests
 pytest
+pyobjc-framework-CoreLocation; sys_platform == "darwin"

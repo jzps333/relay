@@ -140,6 +140,9 @@ def run(name: str, params: dict, device) -> str:
         # (and the agent can't accidentally tap "Don't allow").
         if hasattr(device, "grant_location"):
             device.grant_location("com.google.android.apps.maps")
+            # Put the emulator where the Mac really is (otherwise it's in California).
+            from relay import location
+            location.sync_emulator_to_mac()
         device.open_uri(f"google.navigation:q={quote(dest)}&mode={mode}", package="com.google.android.apps.maps")
         return f"Starting directions to {dest}."
 

@@ -31,3 +31,6 @@ RELAY_PASSPHRASE = os.getenv("RELAY_PASSPHRASE", "")
 CLAUDE_FAST_MODEL = os.getenv("CLAUDE_FAST_MODEL", "claude-haiku-5-5")
 # Screenshots are shrunk to this width before going to the AI (smaller = faster upload).
 SCREENSHOT_WIDTH = int(os.getenv("SCREENSHOT_WIDTH", "540"))
+
+# Copy the Mac's real location to the emulator before directions (see relay/location.py).
+SYNC_MAC_LOCATION = os.getenv("SYNC_MAC_LOCATION", "true").lower() in ("1", "true", "yes")
