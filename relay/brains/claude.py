@@ -2,7 +2,7 @@
 
 We use the official `anthropic` Python SDK. To get *structured* output (not free text) we
 use tool use: we define a tool whose input schema looks exactly like our data, and set
-`tool_choice` so Claude is forced to "call" that tool. The tool's input IS our answer.
+`tool_choice` "auto" plus an instruction so Claude "calls" that tool. The tool's input IS our answer.
 """
 from __future__ import annotations
 
@@ -92,6 +92,34 @@ def _tool_input(response, tool_name: str) -> dict:
     raise ValueError(f"Claude did not call {tool_name}")
 
 
+def _call_tool(system: str, tool: dict, messages: list[dict], max_tokens: int = 1024) -> dict:
+    """Ask Claude to answer by calling `tool`, and return the tool's input.
+
+    Newer Claude models reject a FORCED tool_choice, so we leave it on "auto",
+    tell Claude in the system prompt to always call the tool, and if it answers
+    in plain text anyway we ask once more.
+    """
+    name = tool["name"]
+    system = f"{system}\n\nAlways answer by calling the {name} tool. Never reply with plain text."
+    response = _client().messages.create(
+        model=config.CLAUDE_MODEL, max_tokens=max_tokens, system=system,
+        tools=[tool], tool_choice={"type": "auto"}, messages=messages,
+    )
+    try:
+        return _tool_input(response, name)
+    except ValueError:
+        # Second try: show Claude what it said and remind it to use the tool.
+        retry = messages + [
+            {"role": "assistant", "content": response.content},
+            {"role": "user", "content": f"Please call the {name} tool now."},
+        ]
+        response = _client().messages.create(
+            model=config.CLAUDE_MODEL, max_tokens=max_tokens, system=system,
+            tools=[tool], tool_choice={"type": "auto"}, messages=retry,
+        )
+        return _tool_input(response, name)
+
+
 def _first_text(response) -> str:
     """Join the text blocks of a plain (non-tool) reply."""
     parts = [b.text for b in response.content if getattr(b, "type", None) == "text"]
@@ -124,16 +152,13 @@ def _history_text(history: list[Action], n: int = 5) -> str:
 
 def plan(goal: str, device: str) -> list[str]:
     """Split the user's goal into 2-6 short sub-goals."""
-    response = _client().messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=512,
-        system="You break a user's spoken request into 2 to 6 short, concrete steps "
+    data = _call_tool(
+        "You break a user's spoken request into 2 to 6 short, concrete steps "
         "for operating a device. Each step is a few words, e.g. 'Open WhatsApp'.",
-        tools=[PLAN_TOOL],
-        tool_choice={"type": "tool", "name": "submit_plan"},
-        messages=[{"role": "user", "content": f"Device: {device}\nGoal: {goal}"}],
+        PLAN_TOOL,
+        [{"role": "user", "content": f"Device: {device}\nGoal: {goal}"}],
     )
-    subgoals = [str(s).strip() for s in _tool_input(response, "submit_plan").get("subgoals", [])]
+    subgoals = [str(s).strip() for s in data.get("subgoals", [])]
     subgoals = [s for s in subgoals if s][:6]
     # Safety net: never return an empty plan; the goal itself is a valid single step.
     return subgoals or [goal]
@@ -177,15 +202,8 @@ def pick_action(goal: str, subgoal: str, screen: Screen, history: list[Action]) 
     if screen.screenshot_png:
         content.append(_image_block(screen.screenshot_png))
 
-    response = _client().messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=512,
-        system=SYSTEM_PROMPT,
-        tools=[CHOOSE_ACTION_TOOL],
-        tool_choice={"type": "tool", "name": "choose_action"},
-        messages=[{"role": "user", "content": content}],
-    )
-    return parse_action(_tool_input(response, "choose_action"))
+    data = _call_tool(SYSTEM_PROMPT, CHOOSE_ACTION_TOOL, [{"role": "user", "content": content}])
+    return parse_action(data)
 
 
 def describe_screen(screen: Screen) -> str:

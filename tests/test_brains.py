@@ -53,7 +53,7 @@ def test_claude_tool_output_parses_to_action(monkeypatch):
 
     assert a == Action(kind="tap", element_id=1, confidence=1.0, source="claude", reason="open Mom chat")
     # forced tool choice + screenshot sent as an image block
-    assert msgs.kwargs["tool_choice"] == {"type": "tool", "name": "choose_action"}
+    assert msgs.kwargs["tool_choice"] == {"type": "auto"}  # forced choice is rejected by newer models
     blocks = msgs.kwargs["messages"][0]["content"]
     assert blocks[1]["type"] == "image"
     # only the last 5 actions are sent
