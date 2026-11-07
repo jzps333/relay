@@ -9,6 +9,7 @@ It prints every spoken update, and when Relay asks a question
 import argparse
 import logging
 
+from relay import agent
 from relay.agent import Task
 
 
@@ -22,6 +23,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="  [%(name)s] %(message)s")
 
+    agent.REPLY_TIMEOUT = 600  # typing takes longer than talking: wait up to 10 min
     task = Task(args.goal, device_name=args.device).start()
     shown = 0
     while True:

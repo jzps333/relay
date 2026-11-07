@@ -108,6 +108,12 @@ def parse_hierarchy(xml: str) -> list[Element]:
         if not (clickable or text or is_input):
             continue
 
+        # Switches and checkboxes: say whether they're on, so the AI never
+        # has to ask a blind user "is it on?".
+        if node.get("checkable") == "true":
+            state = "on" if node.get("checked") == "true" else "off"
+            text = f"{text} [{state}]".strip() if text else f"switch [{state}]"
+
         bounds = parse_bounds(node.get("bounds", ""))
         if bounds is None:
             continue

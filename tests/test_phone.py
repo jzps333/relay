@@ -189,3 +189,14 @@ def test_unlabeled_button_borrows_child_text_or_resource_id():
     els = parse_hierarchy(xml)
     assert els[0].text == "Wi-Fi"
     assert els[-1].text == "settings button"
+
+
+def test_switch_state_is_in_the_label():
+    from relay.devices.phone import parse_hierarchy
+    xml = """<hierarchy>
+    <node class="android.widget.Switch" clickable="true" checkable="true" checked="true" bounds="[0,0][100,100]" text="Dark theme" content-desc=""/>
+    <node class="android.widget.Switch" clickable="true" checkable="true" checked="false" bounds="[0,200][100,300]" text="" content-desc=""/>
+    </hierarchy>"""
+    els = parse_hierarchy(xml)
+    assert els[0].text == "Dark theme [on]"
+    assert els[1].text == "switch [off]"

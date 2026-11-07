@@ -19,3 +19,4 @@ MAX_STEPS = int(os.getenv("MAX_STEPS", "25"))
 DEFAULT_DEVICE = os.getenv("DEFAULT_DEVICE", "phone")
 ADB_SERIAL = os.getenv("ADB_SERIAL", "")  # empty = first device
 ROUTINES_PATH = os.getenv("ROUTINES_PATH", "routines.json")
+REPLY_TIMEOUT = float(os.getenv("REPLY_TIMEOUT", "60"))  # seconds Relay waits for a spoken yes/no

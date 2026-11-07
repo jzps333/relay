@@ -25,7 +25,7 @@ from relay.types import Action, Screen
 if TYPE_CHECKING:  # only for type hints; the real import happens lazily in _work()
     from relay.routines import Routine
 
-REPLY_TIMEOUT = 60.0  # seconds to wait for "yes"/"no" before cancelling
+REPLY_TIMEOUT = float(config.__dict__.get("REPLY_TIMEOUT", 60.0))  # seconds to wait for an answer before cancelling
 
 _YES = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "do it", "go ahead", "please"}
 _DESCRIBE = re.compile(r"(?i)what'?s on (?:my|the) screen|describe (?:my |the )?screen|read (?:my |the )?screen")
