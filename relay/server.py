@@ -15,6 +15,7 @@ Every route except /health needs the header  Authorization: Bearer <RELAY_TOKEN>
 from __future__ import annotations
 
 import re
+import os
 import secrets
 import socket
 import threading
@@ -25,9 +26,10 @@ from pydantic import BaseModel
 
 from relay import agent, config, router, voice
 
-# How long one HTTP request waits for the task. iOS Shortcuts give up around 30-60 s,
-# so 25 s leaves headroom while usually being long enough to get the final answer.
-WAIT_SECONDS = 25.0
+# How long one HTTP request waits for the task before answering "still working".
+# Shortcuts' Get Contents of URL waits about 60 s, so 45 s leaves headroom and lets
+# most tasks (popups, opening apps, summaries) finish in a single request.
+WAIT_SECONDS = float(os.getenv("COMMAND_WAIT_SECONDS", "45"))
 PORT = 8000
 HEALTH_DEVICE_TIMEOUT = 1.5  # /health never waits longer than this for the emulator
 
