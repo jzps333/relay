@@ -200,3 +200,13 @@ def test_switch_state_is_in_the_label():
     els = parse_hierarchy(xml)
     assert els[0].text == "Dark theme [on]"
     assert els[1].text == "switch [off]"
+
+
+def test_row_gets_state_of_child_switch():
+    from relay.devices.phone import parse_hierarchy
+    xml = """<hierarchy><node class="android.widget.LinearLayout" clickable="true" bounds="[0,0][500,100]" text="" content-desc="">
+      <node class="android.widget.TextView" clickable="false" bounds="[0,0][300,100]" text="Use Dark theme" content-desc=""/>
+      <node class="android.widget.Switch" clickable="false" checkable="true" checked="true" bounds="[400,0][500,100]" text="" content-desc=""/>
+    </node></hierarchy>"""
+    els = parse_hierarchy(xml)
+    assert els[0].text == "Use Dark theme [on]"

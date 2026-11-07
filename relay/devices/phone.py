@@ -105,6 +105,15 @@ def parse_hierarchy(xml: str) -> list[Element]:
             # sees "button:" and can't tell what it does, so borrow a label.
             text = _fallback_label(node)
 
+        # A clickable row often holds the real switch as a child. Copy the
+        # child's on/off state onto the row so tapping the row is clearly a toggle.
+        if clickable and node.get("checkable") != "true":
+            for child in node.iter("node"):
+                if child is not node and child.get("checkable") == "true":
+                    state = "on" if child.get("checked") == "true" else "off"
+                    text = f"{text} [{state}]".strip() if text else f"switch [{state}]"
+                    break
+
         if not (clickable or text or is_input):
             continue
 

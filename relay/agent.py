@@ -246,7 +246,9 @@ class Task:
                                     "Try breaking it into smaller requests.")
                 steps += 1
 
-                screen = device.get_screen()
+                # Screenshot too, so Claude can SEE the screen (switches, colors,
+                # icons) instead of asking a blind user what's on it.
+                screen = device.get_screen(with_screenshot=True)
                 action = picker.choose_action(goal, subgoal, screen, history)
                 self._check_stop()
 
