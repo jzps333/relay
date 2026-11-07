@@ -42,7 +42,9 @@ KIND_CRITERIA = {
 }
 
 # Jev cannot write sentences, so these kinds are handed to Claude (via JevError).
-NEEDS_FREE_TEXT = {"open_app", "done", "ask_user"}
+# Jev only picks from options, so it can't write. "done" is allowed with no
+# text: the agent lets Claude double-check and write the summary on the LAST step.
+NEEDS_FREE_TEXT = {"open_app", "ask_user"}
 
 NO_FIT = "none_of_these"  # extra option for the text question
 

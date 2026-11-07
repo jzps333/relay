@@ -138,7 +138,7 @@ def test_jev_falls_back_to_confidence_field(monkeypatch):
 
 
 @pytest.mark.parametrize("answers", [
-    {"kind": choice("done", {"done": 0.99})},              # needs a spoken sentence
+    {"kind": choice("ask_user", {"ask_user": 0.99})},      # needs a spoken sentence
     {"kind": {"type": "refusal"}},                         # Jev refused
     {"kind": choice("tap", {"tap": 1}), "element": choice("e99", {"e99": 1})},  # bad id
     {"kind": choice("type", {"type": 1}), "element": choice("e0", {"e0": 1})},  # no text candidates
@@ -225,3 +225,13 @@ def test_picker_missing_key_skips_jev(brains, monkeypatch):
     monkeypatch.setattr(config, "JEV_API_KEY", "")
     assert choose() is CLAUDE_ACTION
     assert brains["jev_n"] == 0
+
+
+def test_jev_can_say_done_without_text(monkeypatch):
+    from relay.brains import jev
+    from relay.types import Screen
+    monkeypatch.setattr(jev.config, "JEV_API_KEY", "k")
+    monkeypatch.setattr(jev, "_call_jev", lambda payload: {"answers": {
+        "kind": {"type": "choice", "choice": "done", "probabilities": {"done": 0.9}}}})
+    a = jev.pick_action("g", "s", Screen(device="phone", app="x", elements=[]), [])
+    assert a.kind == "done" and a.source == "jev" and a.text is None

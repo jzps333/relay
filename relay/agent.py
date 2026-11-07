@@ -252,6 +252,12 @@ class Task:
                 action = picker.choose_action(goal, subgoal, screen, history)
                 self._check_stop()
 
+                # Jev can say a middle step is done (fast, no Claude call). On the
+                # LAST step, Claude double-checks the screen and writes the summary.
+                if action.kind == "done" and action.source == "jev" and subgoal == subgoals[-1]:
+                    from relay.brains import claude
+                    action = claude.pick_action(goal, subgoal, screen, history)
+
                 if action.kind == "done":
                     final = action.text or final
                     history.append(action)
