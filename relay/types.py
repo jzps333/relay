@@ -36,3 +36,4 @@ class Action:
     confidence: float = 1.0
     source: str = ""
     reason: str = ""
+    goal_complete: bool = False  # brain says the WHOLE goal is finished, skip remaining steps

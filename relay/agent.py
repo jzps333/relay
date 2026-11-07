@@ -238,7 +238,10 @@ class Task:
         steps = 0
         final = "Done."
 
+        goal_finished = False
         for subgoal in subgoals:
+            if goal_finished:
+                break
             while True:
                 self._check_stop()
                 if steps >= config.MAX_STEPS:
@@ -261,6 +264,9 @@ class Task:
                 if action.kind == "done":
                     final = action.text or final
                     history.append(action)
+                    # Claude can say the whole goal is already done (steps often
+                    # finish early), so we don't spend a call per leftover step.
+                    goal_finished = action.goal_complete
                     break  # on to the next sub-goal
 
                 if action.kind == "ask_user":

@@ -235,3 +235,9 @@ def test_jev_can_say_done_without_text(monkeypatch):
         "kind": {"type": "choice", "choice": "done", "probabilities": {"done": 0.9}}}})
     a = jev.pick_action("g", "s", Screen(device="phone", app="x", elements=[]), [])
     assert a.kind == "done" and a.source == "jev" and a.text is None
+
+
+def test_goal_complete_only_with_done():
+    from relay.brains.claude import parse_action
+    assert parse_action({"kind": "done", "text": "Sent.", "goal_complete": True}).goal_complete
+    assert not parse_action({"kind": "tap", "element_id": 1, "goal_complete": True}).goal_complete

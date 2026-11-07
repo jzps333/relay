@@ -206,6 +206,9 @@ def needs_confirmation(action: Action, screen: Screen) -> str | None:
                     "Please enter it yourself, then tell me to continue.")
         return None
 
+    # "Send to (555) 123-4567" in a contact list just PICKS the recipient; nothing is sent.
+    if action.kind == "tap" and element is not None and re.match(r"\s*send\s+to\b", element.text, re.I):
+        return None
     if action.kind == "tap" and element is not None and _has(_RISKY_TAP, element.text):
         label = element.text.strip()
         return f"About to tap {label} in {app}. Should I do it?"

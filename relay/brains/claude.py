@@ -50,6 +50,11 @@ CHOOSE_ACTION_TOOL = {
             },
             "direction": {"type": ["string", "null"], "enum": ["up", "down", None]},
             "reason": {"type": "string", "description": "One short sentence: why this action."},
+            "goal_complete": {
+                "type": "boolean",
+                "description": "With done: true if the user's WHOLE goal is finished "
+                "(not just this sub-goal), so remaining sub-goals are skipped.",
+            },
         },
         "required": ["kind", "reason"],
     },
@@ -188,6 +193,7 @@ def parse_action(data: dict) -> Action:
         confidence=1.0,
         source="claude",
         reason=data.get("reason", ""),
+        goal_complete=bool(data.get("goal_complete")) and kind == "done",
     )
 
 

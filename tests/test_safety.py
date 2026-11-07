@@ -143,3 +143,13 @@ def test_no(text):
 def test_unclear_reply_is_neither():
     assert not safety.is_yes("what?")
     assert not safety.is_no("what?")
+
+
+def test_picking_a_recipient_is_not_a_send():
+    from relay import safety
+    from relay.types import Screen, Element, Action
+    scr = Screen(device="phone", app="com.google.android.apps.messaging",
+                 elements=[Element(0, "Send to (555) 123-4567", "button", (0, 0, 1, 1), True),
+                           Element(1, "Send SMS", "button", (0, 0, 1, 1), True)])
+    assert safety.needs_confirmation(Action(kind="tap", element_id=0), scr) is None
+    assert safety.needs_confirmation(Action(kind="tap", element_id=1), scr) is not None
