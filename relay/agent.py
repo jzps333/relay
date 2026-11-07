@@ -222,8 +222,13 @@ class Task:
         if _DESCRIBE.search(self.goal):
             return self._describe(device)
 
-        # 4. Skills: instant shortcuts (Maps, music, open/close apps, volume).
-        from relay import skills
+        # 4a. Workflows: one saying runs several steps ("morning outlook").
+        from relay import skills, workflows
+        flow = workflows.match(self.goal)
+        if flow is not None:
+            return self._run_workflow(device, safety, skills, flow)
+
+        # 4b. Skills: instant shortcuts (Maps, music, open/close apps, volume).
         picked = skills.route(self.goal, self.device_name)
         if picked is not None:
             name, params = picked
@@ -286,12 +291,30 @@ class Task:
         lines = skills.collect_inbox(device)
         return skills.summarize_inbox(lines, params.get("timeframe", "recent"))
 
+    def _run_workflow(self, device, safety, skills, flow) -> str:
+        """Run each step of a workflow and join the spoken results in order."""
+        parts = []
+        for step in flow.steps:
+            self._check_stop()
+            if step.skill == "email_summary":
+                said = self._email_summary(device, safety, skills, step.params)
+            elif step.skill == "news_briefing":
+                said = self._news_briefing(device, safety, skills, step.params)
+            elif step.skill in skills.SKILL_NAMES:
+                said = skills.run(step.skill, step.params, device)
+            else:
+                said = f"I don't know how to do the step {step.skill}."
+            parts.append(f"{step.intro} {said}".strip())
+        return " ".join(parts)
+
     def _news_briefing(self, device, safety, skills, params: dict) -> str:
         """Read X (news accounts or the Following feed) and give a spoken briefing."""
-        feed = params.get("feed") or ("accounts" if params.get("accounts") else "accounts")
-        accounts = [a.lstrip("@") for a in (params.get("accounts") or config.NEWS_ACCOUNTS)]
+        from relay import workflows
+        feed = params.get("feed") or "accounts"
+        accounts = workflows.resolve_accounts(params)
+        shown = accounts[:config.MAX_NEWS_ACCOUNTS]
         self._narrate("Checking your timeline" if feed == "following" else
-                      "Checking " + ", ".join("@" + a for a in accounts[:3]))
+                      f"Reading {len(shown)} account{'s' if len(shown) != 1 else ''} on X")
         lines = skills.collect_x(device, feed, accounts)
         if skills.find_blocker(device, wait=0.5) is not None and not self._clear_popups(device, safety, skills):
             raise Cancelled("X is showing something I can't get past. Please open it once yourself.")

@@ -37,3 +37,9 @@ SYNC_MAC_LOCATION = os.getenv("SYNC_MAC_LOCATION", "true").lower() in ("1", "tru
 
 # X (Twitter) accounts read for "what happened overnight" (handles, comma-separated, no @).
 NEWS_ACCOUNTS = [h.strip().lstrip("@") for h in os.getenv("NEWS_ACCOUNTS", "DeItaone").split(",") if h.strip()]
+
+# Workflows: sayings that run several steps (see workflows.example.json).
+WORKFLOWS_PATH = os.getenv("WORKFLOWS_PATH", "workflows.json")
+# Most X accounts read in one briefing, and screens scrolled per account.
+MAX_NEWS_ACCOUNTS = int(os.getenv("MAX_NEWS_ACCOUNTS", "6"))
+NEWS_PAGES_PER_ACCOUNT = int(os.getenv("NEWS_PAGES_PER_ACCOUNT", "2"))

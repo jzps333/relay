@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 routines.json
 audio/
+workflows.json

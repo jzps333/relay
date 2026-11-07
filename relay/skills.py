@@ -103,6 +103,8 @@ SKILL_TOOLS = [
             "properties": {
                 "accounts": {"type": "array", "items": {"type": "string"},
                              "description": "X handles the user named, without @. Omit to use the defaults."},
+                "group": {"type": "string",
+                          "description": "A named group of accounts from the user's settings, e.g. 'macro' or 'micro'."},
                 "feed": {"type": "string", "enum": ["accounts", "following"],
                          "description": "'following' = the user's own timeline; 'accounts' = specific news accounts."},
                 "topic": {"type": "string", "description": "What to focus on, e.g. 'markets', 'tech', 'anything'."},
@@ -500,7 +502,7 @@ def _tap_text(device, label: str) -> bool:
     return False
 
 
-def collect_x(device, feed: str, accounts: list[str], pages: int = 3) -> list[str]:
+def collect_x(device, feed: str, accounts: list[str], pages: int | None = None) -> list[str]:
     """Read posts off X: specific accounts' profiles, or the Following timeline."""
     lines: list[str] = []
     if feed == "following" or not accounts:
@@ -509,7 +511,8 @@ def collect_x(device, feed: str, accounts: list[str], pages: int = 3) -> list[st
         _tap_text(device, "Following")  # the timeline tab; "For you" is the default
         lines += collect_screen_text(device, pages)
     else:
-        for handle in accounts[:3]:  # cap it so a briefing stays quick
+        pages = pages or config.NEWS_PAGES_PER_ACCOUNT
+        for handle in accounts[:config.MAX_NEWS_ACCOUNTS]:  # cap it so a briefing stays quick
             # Opening the profile link jumps straight to that account in the X app.
             device.open_uri(f"https://x.com/{handle}", package=X_PACKAGE)
             time.sleep(2.5)

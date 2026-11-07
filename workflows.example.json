@@ -1,0 +1,29 @@
+{
+  "_help": "Copy this file to workflows.json and edit it. account_groups = named lists of X handles (no @). Each workflow: the phrases that start it, and the steps it runs in order. Step skills: news_briefing (params: group or accounts, topic), email_summary (params: timeframe = overnight/today/this week/recent). 'intro' is what Relay says before that step's summary.",
+
+  "account_groups": {
+    "macro": ["DeItaone", "FirstSquawk", "LiveSquawk"],
+    "micro": ["unusual_whales", "StockMKTNewz"]
+  },
+
+  "workflows": [
+    {
+      "name": "morning briefing",
+      "phrases": ["give me my morning briefing", "morning briefing", "brief me"],
+      "steps": [
+        {"skill": "email_summary", "intro": "First, your email.", "params": {"timeframe": "overnight"}},
+        {"skill": "news_briefing", "intro": "Now the markets.", "params": {"group": "macro", "topic": "markets"}}
+      ]
+    },
+    {
+      "name": "morning outlook",
+      "phrases": ["give me my morning outlook", "morning outlook", "what's the outlook"],
+      "steps": [
+        {"skill": "news_briefing", "intro": "The big picture.",
+         "params": {"group": "macro", "topic": "macroeconomics: the Fed, rates, inflation, jobs, oil, global markets, futures"}},
+        {"skill": "news_briefing", "intro": "Now individual stocks.",
+         "params": {"group": "micro", "topic": "individual companies: earnings, big stock moves, deals, unusual options activity"}}
+      ]
+    }
+  ]
+}
