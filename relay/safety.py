@@ -128,11 +128,13 @@ def is_stop(utterance: str) -> bool:
             return True                       # "stop it now please"
         return False
 
-    # Very short utterances that END with the stop word: "I said stop",
-    # "oh no cancel", "ugh never mind".
+    # Short exclamations that END with the stop word: "I said stop",
+    # "oh god cancel". Only if every earlier word is a filler word, so
+    # "find bus stop" is still a goal.
     real_words = [w for w in words if w[0].isalnum()]
-    if 0 < len(real_words) <= 3:
-        return real_words[-1] in _STOP_WORDS or real_words[-2:] == ["never", "mind"]
+    exclaim = {"i", "said", "oh", "god", "ugh", "come", "on", "can", "you", "please"}
+    if 0 < len(real_words) <= 4 and real_words[-1] in _STOP_WORDS:
+        return all(w in exclaim for w in real_words[:-1])
     return False
 
 

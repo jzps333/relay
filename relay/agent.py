@@ -143,6 +143,7 @@ class Task:
     def _ask(self, question: str) -> str:
         """Pause, speak `question`, and wait for /reply. Timeout or stop -> Cancelled."""
         self._reply_ready.clear()
+        self._check_stop()  # stop() may have fired just before we cleared the event
         self._set(status="waiting", question=question)
         got = self._reply_ready.wait(REPLY_TIMEOUT)
         self._set(status="running", question=None)

@@ -60,6 +60,7 @@ def test_stop_true(text):
     "cancel my uber order",
     "open the stopwatch",
     "find the bus stop near me",
+    "find bus stop",
     "",
 ])
 def test_stop_false(text):
