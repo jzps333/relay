@@ -56,6 +56,30 @@ def _kind_for(class_name: str, clickable: bool, has_text: bool) -> str:
     return "text"
 
 
+def _fallback_label(node) -> str:
+    """Label for a clickable node with no text of its own.
+
+    1. Text of its children (a row whose child says "Wi-Fi" -> "Wi-Fi").
+    2. Its resource-id, made readable ("com.x:id/wifi_toggle" -> "wifi toggle").
+    """
+    child_texts = []
+    for child in node.iter("node"):
+        if child is node:
+            continue
+        t = (child.get("text") or child.get("content-desc") or "").strip()
+        if t and t not in child_texts:
+            child_texts.append(t)
+        if len(child_texts) == 3:
+            break
+    if child_texts:
+        return " / ".join(child_texts)
+
+    res_id = node.get("resource-id") or ""
+    if "/" in res_id:
+        return res_id.split("/")[-1].replace("_", " ")
+    return ""
+
+
 def parse_hierarchy(xml: str) -> list[Element]:
     """Parse a uiautomator XML dump into a flat list of useful Elements.
 
@@ -76,6 +100,10 @@ def parse_hierarchy(xml: str) -> list[Element]:
         text = (node.get("text") or node.get("content-desc") or "").strip()
         if not text and is_input:
             text = (node.get("hint") or "").strip()
+        if not text and clickable:
+            # Many icon buttons have no label of their own. Without one the AI
+            # sees "button:" and can't tell what it does, so borrow a label.
+            text = _fallback_label(node)
 
         if not (clickable or text or is_input):
             continue

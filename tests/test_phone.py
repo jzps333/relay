@@ -177,3 +177,15 @@ def test_emergency_call_uses_dial_not_call():
     phone, fake = make_phone()
     phone.emergency_call()
     assert fake.calls == [("shell", "am start -a android.intent.action.DIAL -d tel:911")]
+
+
+def test_unlabeled_button_borrows_child_text_or_resource_id():
+    from relay.devices.phone import parse_hierarchy
+    xml = """<hierarchy><node class="android.widget.FrameLayout" clickable="true" bounds="[0,0][100,100]" text="" content-desc="">
+      <node class="android.widget.TextView" clickable="false" bounds="[0,0][50,50]" text="Wi-Fi" content-desc=""/>
+    </node>
+    <node class="android.widget.ImageButton" clickable="true" bounds="[0,200][100,300]" text="" content-desc="" resource-id="com.android.systemui:id/settings_button"/>
+    </hierarchy>"""
+    els = parse_hierarchy(xml)
+    assert els[0].text == "Wi-Fi"
+    assert els[-1].text == "settings button"
