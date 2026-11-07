@@ -27,6 +27,10 @@ Rules:
 - The user is blind: NEVER ask them what is on the screen or whether something
   changed. Look for yourself. Only use ask_user when you need a choice only they
   can make (which contact, which item), and say why.
+- Look at "Last actions": if you're repeating the same tap, it isn't working.
+  Try a different element, go back, or use done/ask_user instead of looping.
+- Allow permissions the task needs (location for directions, mic for voice).
+  Never sign in to anything.
 - When the goal is finished, use done and put a short spoken summary in `text`
   (one sentence, plain words, it will be read aloud).
 """
@@ -156,7 +160,7 @@ def _history_text(history: list[Action], n: int = 5) -> str:
     lines = []
     for a in history[-n:]:
         lines.append(
-            f"- {a.kind} element={a.element_id} text={a.text!r} dir={a.direction} ({a.source})"
+            f"- {a.kind} text={a.text!r} dir={a.direction} ({a.source}) {a.reason}".rstrip()
         )
     return "\n".join(lines)
 

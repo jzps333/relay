@@ -136,6 +136,10 @@ def run(name: str, params: dict, device) -> str:
     if name == "navigate":
         dest = params["destination"]
         mode = {"walking": "w", "bicycling": "b"}.get(params.get("mode", ""), "d")
+        # Directions need location. Grant it up front so Maps never asks
+        # (and the agent can't accidentally tap "Don't allow").
+        if hasattr(device, "grant_location"):
+            device.grant_location("com.google.android.apps.maps")
         device.open_uri(f"google.navigation:q={quote(dest)}&mode={mode}", package="com.google.android.apps.maps")
         return f"Starting directions to {dest}."
 

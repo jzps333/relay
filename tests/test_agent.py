@@ -37,6 +37,7 @@ class FakeDevice:
 @pytest.fixture
 def env(monkeypatch):
     """Fake modules + a fake device. Tests tweak the `env` attributes."""
+    monkeypatch.setattr(agent, "SETTLE_SECONDS", 0)  # no real pauses in tests
     dev = FakeDevice()
     e = types.SimpleNamespace(device=dev, actions=[], confirm=None, saved=[], routine=None, replay_ok=True)
 
@@ -127,6 +128,9 @@ def test_stop_flag_checked_every_step(env):
 
 def test_max_steps(env, monkeypatch):
     monkeypatch.setattr(config, "MAX_STEPS", 5)
+    # Different actions each time, so this hits the step limit, not loop detection.
+    env.actions = [Action(k, direction="down" if k == "scroll" else None, element_id=None, text=str(i))
+                   for i, k in enumerate(["scroll", "back", "home"] * 4)]
     t = run("loop forever")
     assert t.status == "cancelled"
     assert "limit" in t.say()
@@ -270,3 +274,11 @@ def test_router_pick_device():
     assert router.pick_device("open the android settings", "mac")[0] == "phone"
     assert router.pick_device("scroll down", "mac") == ("mac", "scroll down")
     assert router.pick_device("scroll down", None) == (config.DEFAULT_DEVICE, "scroll down")
+
+
+def test_going_in_circles_stops(env, monkeypatch):
+    monkeypatch.setattr(config, "MAX_STEPS", 20)
+    t = run("loop forever")  # the default fake brain taps the same thing every time
+    assert t.status == "cancelled"
+    assert "circles" in t.say()
+    assert len(env.device.acted) == 3

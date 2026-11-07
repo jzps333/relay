@@ -312,6 +312,11 @@ class Phone:
             cmd += f" -p {package}"
         self._shell(cmd)
 
+    def grant_location(self, package: str) -> None:
+        """Give an app location permission (dev-device shortcut, no popup)."""
+        for perm in ("ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"):
+            self._shell(f"pm grant {package} android.permission.{perm}")
+
     def is_locked(self) -> bool:
         """True if the lock screen is showing (or the screen is off)."""
         try:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 import uuid
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,7 @@ from relay.types import Action, Screen
 if TYPE_CHECKING:  # only for type hints; the real import happens lazily in _work()
     from relay.routines import Routine
 
+SETTLE_SECONDS = 0.7  # pause after each action so we never read a half-changed screen
 REPLY_TIMEOUT = float(config.__dict__.get("REPLY_TIMEOUT", 60.0))  # seconds to wait for an answer before cancelling
 
 _YES = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "do it", "go ahead", "please"}
@@ -45,6 +47,14 @@ def _is_yes(text: str) -> bool:
     # Fallback (used by tests that swap in a fake safety module).
     t = text.lower().strip(" .!?")
     return t in _YES or t.startswith(("yes", "yeah", "sure"))
+
+
+def _label(action: Action, screen: Screen) -> str:
+    """Text of the element an action targets ("" if none)."""
+    for el in screen.elements:
+        if el.id == action.element_id:
+            return el.text
+    return ""
 
 
 def _describe_action(action: Action, screen: Screen) -> str:
@@ -230,8 +240,10 @@ class Task:
                     return said
                 self._narrate(f"Something popped up ({blocker}), handling it")
                 self.goal = (f"{self.goal}. A shortcut already opened the right app, but a popup or "
-                             f"first-run screen is in the way. Dismiss it without signing in "
-                             f"(prefer Skip / Not now / No thanks), then finish the request.")
+                             f"first-run screen is in the way. Never sign in. Skip sign-in, ads and "
+                             f"notification prompts (Skip / Not now / No thanks). But ALLOW permissions "
+                             f"the request needs (e.g. location for directions: 'While using the app'), "
+                             f"then finish the request.")
                 return self._loop(device, safety, routines, resumed=True)
 
         # 5. Saved routine?
@@ -289,6 +301,7 @@ class Task:
         steps = 0
         final = "Done."
 
+        repeats: dict[tuple, int] = {}  # (kind, element label, text) -> times done
         goal_finished = False
         for subgoal in subgoals:
             if goal_finished:
@@ -339,6 +352,14 @@ class Task:
                     if not _is_yes(self._ask(question)):
                         raise Cancelled("Okay, I won't do that.")
 
+                # Remember WHICH element was used (ids change every screen), so the
+                # brain can see if it's repeating itself.
+                label = _label(action, screen)
+                sig = (action.kind, label, action.text)
+                repeats[sig] = repeats.get(sig, 0) + 1
+                if repeats[sig] >= 4:
+                    raise Cancelled(f"I'm going in circles on {label or action.kind}, so I stopped. "
+                                    "Something on the screen may need your help.")
                 try:
                     device.act(action, screen)
                 except ValueError as e:
@@ -350,9 +371,14 @@ class Task:
                     action.reason = f"FAILED: {e}"
                     history.append(action)
                     continue
+                if label:
+                    action.reason = f"on '{label}': {action.reason}"
+                if repeats[sig] >= 2:
+                    action.reason += " (REPEATED: this didn't work before, try something different)"
                 history.append(action)
                 done_steps.append((screen, action))
                 self._narrate(_describe_action(action, screen))
+                time.sleep(SETTLE_SECONDS)  # let the screen finish changing before reading it again
 
         # 5. It worked: remember it so next time is instant.
         if done_steps:
