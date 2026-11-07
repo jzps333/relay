@@ -203,3 +203,36 @@ def test_summarize_inbox_uses_fast_model(monkeypatch):
     assert seen["model"] == config.CLAUDE_FAST_MODEL
     assert "6 PM yesterday" in seen["messages"][0]["content"]
     assert "NEVER read out verification codes" in seen["system"]
+
+
+# ---- X news briefing ----
+
+def test_news_keywords():
+    assert skills.match_keywords("what happened overnight?") == ("news_briefing", {"feed": "accounts", "topic": "markets"})
+    assert skills.match_keywords("summarize my timeline")[1]["feed"] == "following"
+
+
+def test_collect_x_opens_each_account_profile(monkeypatch):
+    from relay.types import Screen, Element
+    monkeypatch.setattr(skills.time, "sleep", lambda s: None)
+    phone = FakePhone()
+    phone.get_screen = lambda with_screenshot=False: Screen(device="phone", app="x", elements=[
+        Element(0, "Fed's Waller: rate cut likely in December", "text", (0, 0, 1, 1), False)])
+    phone.act = lambda a, s: None
+    lines = skills.collect_x(phone, "accounts", ["DeItaone"], pages=1)
+    assert ("uri", "https://x.com/DeItaone", "com.twitter.android") in phone.calls
+    assert "--- posts from @DeItaone ---" in lines
+    assert "Fed's Waller: rate cut likely in December" in lines
+
+
+def test_summarize_news_attributes_and_focuses(monkeypatch):
+    seen = {}
+
+    def create(**kw):
+        seen.update(kw)
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text="Walter Bloomberg reports futures are up.")])
+
+    monkeypatch.setattr("relay.brains.claude._client", lambda: SimpleNamespace(messages=SimpleNamespace(create=create)))
+    assert "futures" in skills.summarize_news(["ES up 0.5%"], "markets")
+    assert "attribute them" in seen["system"]
+    assert "the Fed" in seen["messages"][0]["content"]

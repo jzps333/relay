@@ -43,6 +43,8 @@ APP_PACKAGES = {
     "calendar": "com.google.android.calendar",
     "clock": "com.google.android.deskclock",
     "play store": "com.android.vending",
+    "x": "com.twitter.android",
+    "twitter": "com.twitter.android",
 }
 
 # Android key codes used by the skills (see `adb shell input keyevent`).

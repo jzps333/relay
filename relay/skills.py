@@ -93,6 +93,23 @@ SKILL_TOOLS = [
         },
     },
     {
+        "name": "news_briefing",
+        "description": "Read posts on X (Twitter) and give a short spoken briefing: overnight market/"
+        "macro news from news accounts, or what's new in the user's Following feed. Use for "
+        "'what happened overnight', 'market news', 'what's Walter Bloomberg saying', "
+        "'what's new on my timeline'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "accounts": {"type": "array", "items": {"type": "string"},
+                             "description": "X handles the user named, without @. Omit to use the defaults."},
+                "feed": {"type": "string", "enum": ["accounts", "following"],
+                         "description": "'following' = the user's own timeline; 'accounts' = specific news accounts."},
+                "topic": {"type": "string", "description": "What to focus on, e.g. 'markets', 'tech', 'anything'."},
+            },
+        },
+    },
+    {
         "name": "screen_agent",
         "description": "Use this for EVERYTHING ELSE: anything inside an app (messages, group chats, "
         "email, ordering, searching, settings), or any request with more than one part that the "
@@ -129,6 +146,16 @@ _TRAILING_FILLER = re.compile(r"[\s,]*\b(?:please|thanks|thank you|now)$", re.I)
 # Whole commands that map straight to a skill. The text must match EXACTLY
 # (after filler is removed), so "play my liked songs" never matches "play".
 _EXACT = {
+    # X / news briefing
+    "what happened overnight": ("news_briefing", {"feed": "accounts", "topic": "markets"}),
+    "what happened in the markets overnight": ("news_briefing", {"feed": "accounts", "topic": "markets"}),
+    "market news": ("news_briefing", {"feed": "accounts", "topic": "markets"}),
+    "give me the market news": ("news_briefing", {"feed": "accounts", "topic": "markets"}),
+    "overnight news": ("news_briefing", {"feed": "accounts", "topic": "markets"}),
+    "what's new on my timeline": ("news_briefing", {"feed": "following", "topic": "anything"}),
+    "whats new on my timeline": ("news_briefing", {"feed": "following", "topic": "anything"}),
+    "summarize my timeline": ("news_briefing", {"feed": "following", "topic": "anything"}),
+    "summarize my twitter": ("news_briefing", {"feed": "following", "topic": "anything"}),
     # inbox summary
     "summarize my emails": ("email_summary", {"timeframe": "recent"}),
     "summarize my email": ("email_summary", {"timeframe": "recent"}),
@@ -391,6 +418,10 @@ def navigation_running(device) -> bool:
 # ---------------------------------------------------------------------------
 
 def collect_inbox(device, pages: int = 3) -> list[str]:
+    return collect_screen_text(device, pages)
+
+
+def collect_screen_text(device, pages: int = 3) -> list[str]:
     """Read the Gmail inbox list off the screen, scrolling `pages` times.
 
     Gmail's inbox rows expose sender, subject, snippet and time as text, so the
@@ -443,3 +474,72 @@ def summarize_inbox(lines: list[str], timeframe: str = "recent") -> str:
     )
     text = " ".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
     return text or "I couldn't read your inbox."
+
+
+
+# ---------------------------------------------------------------------------
+# X (Twitter) news briefing
+# ---------------------------------------------------------------------------
+
+X_PACKAGE = "com.twitter.android"
+
+NEWS_SYSTEM = (
+    "You turn raw text read off the X (Twitter) app into a short spoken news briefing for "
+    "someone who is DRIVING and will only HEAR it. The text mixes posts, handles, times like "
+    "'3h', and button labels to ignore. Rules:\n"
+    "- Most important first. Group repeats of the same story into one.\n"
+    "- Say who reported it ('Walter Bloomberg reports...') and roughly when if shown.\n"
+    "- These are posts, not verified facts: attribute them, don't state them as certain.\n"
+    "- Plain spoken sentences, no lists, symbols, hashtags or links. Under 120 words.\n"
+    "- If nothing matches the focus, say so in one sentence."
+)
+
+
+def _tap_text(device, label: str) -> bool:
+    """Tap the first clickable element whose text is exactly `label` (case-insensitive)."""
+    from relay.types import Action
+
+    screen = device.get_screen()
+    for el in screen.elements:
+        if el.clickable and (el.text or "").strip().lower() == label.lower():
+            device.act(Action(kind="tap", element_id=el.id), screen)
+            time.sleep(1.0)
+            return True
+    return False
+
+
+def collect_x(device, feed: str, accounts: list[str], pages: int = 3) -> list[str]:
+    """Read posts off X: specific accounts' profiles, or the Following timeline."""
+    lines: list[str] = []
+    if feed == "following" or not accounts:
+        device.start_app("x")
+        time.sleep(2.0)
+        _tap_text(device, "Following")  # the timeline tab; "For you" is the default
+        lines += collect_screen_text(device, pages)
+    else:
+        for handle in accounts[:3]:  # cap it so a briefing stays quick
+            # Opening the profile link jumps straight to that account in the X app.
+            device.open_uri(f"https://x.com/{handle}", package=X_PACKAGE)
+            time.sleep(2.5)
+            lines.append(f"--- posts from @{handle} ---")
+            lines += collect_screen_text(device, pages)
+    return lines
+
+
+def summarize_news(lines: list[str], topic: str = "markets") -> str:
+    from datetime import datetime
+
+    from relay.brains.claude import _client
+
+    now = datetime.now().strftime("%A %I:%M %p")
+    focus = ("Focus on markets and the economy: stocks, futures, rates, the Fed, inflation, jobs, "
+             "oil, big company news, geopolitics that moves markets. Prefer the last ~12 hours."
+             if topic in ("markets", "macro", "economy", "") else f"Focus on: {topic}.")
+    response = _client().messages.create(
+        model=config.CLAUDE_FAST_MODEL,
+        max_tokens=500,
+        system=NEWS_SYSTEM,
+        messages=[{"role": "user", "content": f"It is {now}. {focus}\n\nText from X:\n" + "\n".join(lines[:400])}],
+    )
+    text = " ".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
+    return text or "I couldn't read anything useful from X."

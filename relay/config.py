@@ -34,3 +34,6 @@ SCREENSHOT_WIDTH = int(os.getenv("SCREENSHOT_WIDTH", "540"))
 
 # Copy the Mac's real location to the emulator before directions (see relay/location.py).
 SYNC_MAC_LOCATION = os.getenv("SYNC_MAC_LOCATION", "true").lower() in ("1", "true", "yes")
+
+# X (Twitter) accounts read for "what happened overnight" (handles, comma-separated, no @).
+NEWS_ACCOUNTS = [h.strip().lstrip("@") for h in os.getenv("NEWS_ACCOUNTS", "DeItaone").split(",") if h.strip()]

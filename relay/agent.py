@@ -229,6 +229,8 @@ class Task:
             name, params = picked
             if name == "email_summary":
                 return self._email_summary(device, safety, skills, params)
+            if name == "news_briefing":
+                return self._news_briefing(device, safety, skills, params)
             try:
                 said = skills.run(name, params, device)
             except Exception as e:
@@ -283,6 +285,17 @@ class Task:
             raise Cancelled("Gmail is showing something I can't get past. Please open it once yourself.")
         lines = skills.collect_inbox(device)
         return skills.summarize_inbox(lines, params.get("timeframe", "recent"))
+
+    def _news_briefing(self, device, safety, skills, params: dict) -> str:
+        """Read X (news accounts or the Following feed) and give a spoken briefing."""
+        feed = params.get("feed") or ("accounts" if params.get("accounts") else "accounts")
+        accounts = [a.lstrip("@") for a in (params.get("accounts") or config.NEWS_ACCOUNTS)]
+        self._narrate("Checking your timeline" if feed == "following" else
+                      "Checking " + ", ".join("@" + a for a in accounts[:3]))
+        lines = skills.collect_x(device, feed, accounts)
+        if skills.find_blocker(device, wait=0.5) is not None and not self._clear_popups(device, safety, skills):
+            raise Cancelled("X is showing something I can't get past. Please open it once yourself.")
+        return skills.summarize_news(lines, params.get("topic", "markets"))
 
     def _clear_popups(self, device, safety, skills, max_rounds: int = 4) -> bool:
         """Tap away popups one at a time. True once none are left."""
