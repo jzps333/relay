@@ -236,3 +236,18 @@ def test_summarize_news_attributes_and_focuses(monkeypatch):
     assert "futures" in skills.summarize_news(["ES up 0.5%"], "markets")
     assert "attribute them" in seen["system"]
     assert "the Fed" in seen["messages"][0]["content"]
+
+
+def test_summary_falls_back_to_main_model_when_empty(monkeypatch):
+    calls = []
+
+    def create(**kw):
+        calls.append(kw["model"])
+        if kw["model"] == config.CLAUDE_FAST_MODEL:
+            return SimpleNamespace(content=[SimpleNamespace(type="thinking")], stop_reason="max_tokens")
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text="Two emails matter.")])
+
+    monkeypatch.setattr(config, "CLAUDE_MODEL", "main-model")
+    monkeypatch.setattr("relay.brains.claude._client", lambda: SimpleNamespace(messages=SimpleNamespace(create=create)))
+    assert skills.summarize_inbox(["Prof. Lee"]) == "Two emails matter."
+    assert calls == [config.CLAUDE_FAST_MODEL, "main-model"]

@@ -457,24 +457,16 @@ SUMMARY_SYSTEM = (
 
 
 def summarize_inbox(lines: list[str], timeframe: str = "recent") -> str:
-    """Turn the inbox text into a short spoken summary with the fast Claude model."""
+    """Turn the inbox text into a short spoken summary."""
     from datetime import datetime
-
-    from relay.brains.claude import _client
 
     now = datetime.now().strftime("%A %I:%M %p")
     focus = {"overnight": "Only emails that arrived since about 6 PM yesterday.",
              "today": "Only emails from today.",
              "this week": "Emails from this week."}.get(timeframe, "The newest emails.")
-    response = _client().messages.create(
-        model=config.CLAUDE_FAST_MODEL,
-        max_tokens=400,
-        system=SUMMARY_SYSTEM,
-        messages=[{"role": "user", "content": f"It is {now}. {focus}\n\nInbox text:\n" + "\n".join(lines[:250])}],
-    )
-    text = " ".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
-    return text or "I couldn't read your inbox."
-
+    log.info("inbox: read %d lines", len(lines))
+    return _spoken_summary(SUMMARY_SYSTEM, f"It is {now}. {focus}\n\nInbox text:\n" + "\n".join(lines[:250]),
+                           "I couldn't read your inbox.")
 
 
 # ---------------------------------------------------------------------------
@@ -529,17 +521,37 @@ def collect_x(device, feed: str, accounts: list[str], pages: int = 3) -> list[st
 def summarize_news(lines: list[str], topic: str = "markets") -> str:
     from datetime import datetime
 
-    from relay.brains.claude import _client
-
     now = datetime.now().strftime("%A %I:%M %p")
     focus = ("Focus on markets and the economy: stocks, futures, rates, the Fed, inflation, jobs, "
              "oil, big company news, geopolitics that moves markets. Prefer the last ~12 hours."
              if topic in ("markets", "macro", "economy", "") else f"Focus on: {topic}.")
-    response = _client().messages.create(
-        model=config.CLAUDE_FAST_MODEL,
-        max_tokens=500,
-        system=NEWS_SYSTEM,
-        messages=[{"role": "user", "content": f"It is {now}. {focus}\n\nText from X:\n" + "\n".join(lines[:400])}],
-    )
-    text = " ".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
-    return text or "I couldn't read anything useful from X."
+    log.info("x: read %d lines", len(lines))
+    return _spoken_summary(NEWS_SYSTEM, f"It is {now}. {focus}\n\nText from X:\n" + "\n".join(lines[:400]),
+                           "I couldn't read anything useful from X.")
+
+
+def _spoken_summary(system: str, user_text: str, fallback: str) -> str:
+    """Ask Claude for a short spoken summary, robustly.
+
+    Tries the fast model first with plenty of room (some models think before
+    answering, and a small limit can end with no text at all), then the main
+    model if the answer comes back empty.
+    """
+    from relay.brains.claude import _client
+
+    for model in dict.fromkeys([config.CLAUDE_FAST_MODEL, config.CLAUDE_MODEL]):
+        try:
+            response = _client().messages.create(
+                model=model, max_tokens=2000, system=system,
+                messages=[{"role": "user", "content": user_text}],
+            )
+        except Exception as e:
+            log.warning("summary with %s failed: %r", model, e)
+            continue
+        text = " ".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
+        if text:
+            return text
+        log.warning("summary with %s came back empty (stop_reason=%s, blocks=%s)", model,
+                    getattr(response, "stop_reason", "?"),
+                    [getattr(b, "type", "?") for b in response.content])
+    return fallback
