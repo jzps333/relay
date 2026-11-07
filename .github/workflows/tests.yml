@@ -1,0 +1,62 @@
+# Runs Relay's tests on every push, then (optionally) tells your Grok Bot.
+#
+# Grok Bot hookup: in the Grok Bot app, make a routine with a Webhook trigger,
+# then in GitHub: repo Settings > Secrets and variables > Actions, add
+#   GROK_BOT_WEBHOOK_URL  (https://api2.cursor.sh/automations/webhook/<routine-id>)
+#   GROK_BOT_WEBHOOK_KEY  (starts with crsr_)
+# Without those secrets, the tests still run; the Grok Bot step is skipped.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        id: tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m pytest -q 2>&1 | tee pytest.log
+
+      - name: Tell Grok Bot
+        if: always()
+        env:
+          URL: ${{ secrets.GROK_BOT_WEBHOOK_URL }}
+          KEY: ${{ secrets.GROK_BOT_WEBHOOK_KEY }}
+          OUTCOME: ${{ steps.tests.outcome }}
+        run: |
+          if [ -z "$URL" ]; then echo "No Grok Bot webhook set, skipping."; exit 0; fi
+          python - <<'PY'
+          import json, os, urllib.request
+          log = open("pytest.log").read()[-6000:]  # the end has the summary and failures
+          body = {
+              "repo": os.environ["GITHUB_REPOSITORY"],
+              "commit": os.environ["GITHUB_SHA"][:7],
+              "branch": os.environ["GITHUB_REF_NAME"],
+              "author": os.environ["GITHUB_ACTOR"],
+              "result": os.environ["OUTCOME"],          # "success" or "failure"
+              "run_url": f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+              "pytest_tail": log,
+          }
+          req = urllib.request.Request(os.environ["URL"], data=json.dumps(body).encode(),
+                                       headers={"Authorization": f'Bearer {os.environ["KEY"]}',
+                                                "Content-Type": "application/json"})
+          print(urllib.request.urlopen(req, timeout=20).read().decode())
+          PY
+
+      - name: Fail the check if tests failed
+        if: steps.tests.outcome == 'failure'
+        run: exit 1
