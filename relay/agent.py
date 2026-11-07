@@ -218,9 +218,21 @@ class Task:
         if picked is not None:
             name, params = picked
             try:
-                return skills.run(name, params, device)
+                said = skills.run(name, params, device)
             except Exception as e:
                 print(f"[agent] skill {name} failed, using the screen agent: {e!r}")
+            else:
+                # A shortcut can land on a first-run screen, sign-in prompt or
+                # permission popup instead of doing the thing. Check, and if
+                # something is in the way, let the screen agent finish the job.
+                blocker = skills.find_blocker(device) if name in skills.CHECK_AFTER else None
+                if blocker is None:
+                    return said
+                self._narrate(f"Something popped up ({blocker}), handling it")
+                self.goal = (f"{self.goal}. A shortcut already opened the right app, but a popup or "
+                             f"first-run screen is in the way. Dismiss it without signing in "
+                             f"(prefer Skip / Not now / No thanks), then finish the request.")
+                return self._loop(device, safety, routines, resumed=True)
 
         # 5. Saved routine?
         routine: Routine | None = routines.find(self.goal)

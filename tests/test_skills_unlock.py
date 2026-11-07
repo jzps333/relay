@@ -114,3 +114,24 @@ def test_locked_with_passphrase_unlocks_with_pin(monkeypatch):
     task._unlock_if_needed(phone)
     assert phone.calls == [("unlock", "1234")]
     assert "sesame" not in task.goal  # the passphrase never reaches the AI
+
+
+# ---- popups after a skill ----
+
+def test_find_blocker_spots_onboarding_skip(monkeypatch):
+    from relay.types import Screen, Element
+    monkeypatch.setattr(skills.time, "sleep", lambda s: None)
+    phone = FakePhone()
+    phone.get_screen = lambda with_screenshot=False: Screen(device="phone", app="maps", elements=[
+        Element(0, "Skip", "button", (0, 0, 1, 1), True),
+        Element(1, "Make it your map", "text", (0, 0, 1, 1), False)])
+    assert skills.find_blocker(phone) == "Skip"
+
+
+def test_find_blocker_none_when_clear(monkeypatch):
+    from relay.types import Screen, Element
+    monkeypatch.setattr(skills.time, "sleep", lambda s: None)
+    phone = FakePhone()
+    phone.get_screen = lambda with_screenshot=False: Screen(device="phone", app="maps", elements=[
+        Element(0, "Exit navigation", "button", (0, 0, 1, 1), True)])
+    assert skills.find_blocker(phone) is None

@@ -166,3 +166,25 @@ def run(name: str, params: dict, device) -> str:
         return "Muted." if key == "mute" else f"Volume {params['direction']}."
 
     raise ValueError(f"unknown skill {name!r}")
+
+
+# Skills whose app might show a popup or first-run screen instead of the result.
+CHECK_AFTER = {"navigate", "open_app"}
+
+# Button words that mean "something is in the way".
+_BLOCKER_WORDS = ("skip", "sign in", "not now", "no thanks", "allow", "accept", "agree",
+                  "got it", "continue", "while using the app", "only this time")
+
+
+def find_blocker(device, wait: float = 2.0) -> str | None:
+    """After a skill runs, return the text of a popup/onboarding button if one is showing."""
+    time.sleep(wait)  # let the app open
+    try:
+        screen = device.get_screen()
+    except Exception:
+        return None
+    for el in screen.elements:
+        text = (el.text or "").strip().lower()
+        if el.clickable and any(text == w or text.startswith(w) for w in _BLOCKER_WORDS):
+            return el.text
+    return None
