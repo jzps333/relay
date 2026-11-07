@@ -1,0 +1,18 @@
+# Server + loop
+fastapi
+uvicorn
+httpx
+python-dotenv
+
+# Brains
+anthropic
+google-genai
+
+# Devices
+uiautomator2                              # Android emulator over ADB
+pyautogui                                 # Mac mouse/keyboard
+mss                                       # Mac screenshots
+pyobjc; sys_platform == "darwin"          # Mac accessibility tree (macOS only)
+
+# Tests
+pytest

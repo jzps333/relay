@@ -5,7 +5,8 @@ load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 JEV_API_KEY = os.getenv("JEV_API_KEY", "")
-JEV_BASE_URL = os.getenv("JEV_BASE_URL", "")
+JEV_BASE_URL = os.getenv("JEV_BASE_URL", "")  # empty = OpenRouter Decisions API
+JEV_MODEL = os.getenv("JEV_MODEL", "typesafe/jev-1.14")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")

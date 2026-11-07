@@ -17,9 +17,13 @@ from __future__ import annotations
 import re
 import threading
 import uuid
+from typing import TYPE_CHECKING
 
 from relay import config, router
 from relay.types import Action, Screen
+
+if TYPE_CHECKING:  # only for type hints; the real import happens lazily in _work()
+    from relay.routines import Routine
 
 REPLY_TIMEOUT = 60.0  # seconds to wait for "yes"/"no" before cancelling
 
@@ -184,15 +188,20 @@ class Task:
             return self._describe(device)
 
         # 3. Saved routine?
-        routine = routines.find(self.goal)
+        routine: Routine | None = routines.find(self.goal)
+        resumed = False
         if routine is not None:
             self._narrate("Running your saved routine")
             if routines.replay(routine, device):
                 return "Done. I used your saved routine."
-            self._narrate("The routine didn't match the screen, so I'll figure it out")
+            # replay() stops at a step it can't match OR one that needs confirmation,
+            # possibly after earlier steps already ran. We DON'T start over: the loop
+            # below picks up from whatever is on screen now (and asks the user live).
+            self._narrate("Picking up from here")
+            resumed = True
 
         # 4. Plan + step loop.
-        return self._loop(device, safety, routines)
+        return self._loop(device, safety, routines, resumed)
 
     def _describe(self, device) -> str:
         from relay.brains import gemini, claude
@@ -203,14 +212,20 @@ class Task:
             print(f"[agent] gemini describe failed, using claude: {e!r}")
             return claude.describe_screen(screen)
 
-    def _loop(self, device, safety, routines) -> str:
+    def _loop(self, device, safety, routines, resumed: bool = False) -> str:
         from relay.brains import claude, picker
 
-        try:
-            subgoals = claude.plan(self.goal, self.device_name) or [self.goal]
-        except Exception as e:
-            print(f"[agent] planning failed, using the goal as one step: {e!r}")
-            subgoals = [self.goal]
+        if resumed:
+            # A routine already did part of the job; a fresh plan would redo those
+            # steps, so give the picker one sub-goal: finish from the current screen.
+            subgoals = [f"Finish this from the current screen (earlier steps are done): {self.goal}"]
+        else:
+            try:
+                subgoals = claude.plan(self.goal, self.device_name) or [self.goal]
+            except Exception as e:
+                print(f"[agent] planning failed, using the goal as one step: {e!r}")
+                subgoals = [self.goal]
+        blocked = getattr(safety, "BLOCKED_PREFIX", "BLOCKED:")
 
         history: list[Action] = []
         done_steps: list[tuple[Screen, Action]] = []  # for saving a routine
@@ -247,11 +262,24 @@ class Task:
                                     "those. Please enter it yourself, then ask me to continue.")
 
                 question = safety.needs_confirmation(action, screen)
+                if question and question.startswith(blocked):
+                    # A refusal, not a question: stop and say why. Never ask the user.
+                    raise Cancelled(question[len(blocked):].strip() or "I can't do that safely.")
                 if question:
                     if not _is_yes(self._ask(question)):
                         raise Cancelled("Okay, I won't do that.")
 
-                device.act(action, screen)
+                try:
+                    device.act(action, screen)
+                except ValueError as e:
+                    # The devices raise ValueError when element_id isn't on the screen
+                    # (the screen changed, or the brain picked a bad id). Count it as a
+                    # failed step, tell the picker via history, and loop: the next pass
+                    # re-reads the screen. It still counts toward MAX_STEPS.
+                    print(f"[agent] step failed: {e}")
+                    action.reason = f"FAILED: {e}"
+                    history.append(action)
+                    continue
                 history.append(action)
                 done_steps.append((screen, action))
                 self._narrate(_describe_action(action, screen))

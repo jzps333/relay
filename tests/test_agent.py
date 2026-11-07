@@ -41,6 +41,7 @@ def env(monkeypatch):
     e = types.SimpleNamespace(device=dev, actions=[], confirm=None, saved=[], routine=None, replay_ok=True)
 
     safety = types.ModuleType("relay.safety")
+    safety.BLOCKED_PREFIX = "BLOCKED:"
     safety.is_emergency = lambda t: "911" in t or "emergency" in t.lower()
     safety.is_stop = lambda t: t.lower().strip() in ("stop", "cancel", "never mind")
     safety.needs_confirmation = lambda a, s: e.confirm(a, s) if e.confirm else None
@@ -182,6 +183,32 @@ def test_ask_user_pauses_and_uses_answer(env):
     assert "the first one" in seen_goals[-1]
 
 
+def test_bad_element_id_is_retried(env, monkeypatch):
+    real_act = env.device.act
+    def act(action, screen):
+        if action.element_id == 99:
+            raise ValueError("element 99 not on screen")
+        real_act(action, screen)
+    monkeypatch.setattr(env.device, "act", act)
+    seen = []
+    script = [Action("tap", element_id=99), Action("tap", element_id=0), Action("done", text="Ok.")]
+    def pick(goal, subgoal, screen, history):
+        seen.append(list(history))
+        return script.pop(0)
+    sys.modules["relay.brains.picker"].choose_action = pick
+    t = run("tap send")
+    assert t.status == "done"
+    assert [a.element_id for a in env.device.acted] == [0]
+    assert "FAILED" in seen[1][0].reason  # picker saw the failure
+
+
+def test_bad_element_id_counts_toward_max_steps(env, monkeypatch):
+    monkeypatch.setattr(config, "MAX_STEPS", 3)
+    env.device.act = lambda a, s: (_ for _ in ()).throw(ValueError("gone"))
+    t = run("tap nothing")
+    assert t.status == "cancelled" and "limit" in t.say()
+
+
 def test_never_types_passwords(env):
     env.actions = [Action("type", element_id=1, text="hunter2")]
     t = run("log in")
@@ -197,11 +224,28 @@ def test_routine_replay(env):
     assert not env.device.acted  # replay handled it, loop never ran
 
 
-def test_routine_fail_falls_back_to_loop(env):
+def test_routine_fail_resumes_without_replanning(env):
     env.routine, env.replay_ok = object(), False
-    env.actions = [Action("done", text="Fixed it.")]
+    planned = []
+    sys.modules["relay.brains.claude"].plan = lambda g, d: planned.append(g) or [g]
+    subgoals = []
+    def pick(goal, subgoal, screen, history):
+        subgoals.append(subgoal)
+        return Action("done", text="Fixed it.")
+    sys.modules["relay.brains.picker"].choose_action = pick
     t = run("text mom")
     assert t.say() == "Fixed it."
+    assert not planned  # continued from the current screen, no fresh plan
+    assert "current screen" in subgoals[0]
+
+
+def test_blocked_is_refusal_not_question(env):
+    env.confirm = lambda a, s: "BLOCKED: I won't type a card number."
+    env.actions = [Action("tap", element_id=0)]
+    t = run("pay")
+    assert t.status == "cancelled"  # never paused to ask
+    assert t.say() == "I won't type a card number."
+    assert not env.device.acted
 
 
 def test_describe_screen_fast_path(env):

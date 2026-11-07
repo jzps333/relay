@@ -25,8 +25,8 @@ from relay.types import Action, Screen
 
 # Default endpoint if JEV_BASE_URL is empty in .env (OpenRouter hosts Jev's Decisions API).
 DEFAULT_URL = "https://openrouter.ai/api/alpha/decisions"
-# config.py has no JEV_MODEL, so we read it here. "~typesafe/jev-latest" also works as an alias.
-JEV_MODEL = os.getenv("JEV_MODEL", "typesafe/jev-1.14")
+# Set JEV_MODEL in .env to change it ("~typesafe/jev-latest" also works).
+JEV_MODEL = config.JEV_MODEL
 TIMEOUT_S = 8.0
 
 # What each action kind means, written as Jev "criteria" (label -> guidance).
@@ -94,7 +94,7 @@ def _text_candidates(goal: str, subgoal: str) -> list[str]:
         found += re.findall(r"[\"“']([^\"”']{1,80})[\"”']", source)
         m = re.search(r"\b(?:type|search for|search|saying|say|that)\s+(.+)$", source, re.I)
         if m:
-            found.append(m.group(1).strip(" .!?"))
+            found.append(m.group(1).strip(" .!?\"'“”"))
     # Remove duplicates but keep order.
     unique: list[str] = []
     for f in found:
