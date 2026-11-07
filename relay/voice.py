@@ -16,6 +16,7 @@ AUDIO_DIR = Path("audio")
 TTS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 MODEL_ID = "eleven_flash_v2_5"          # ElevenLabs' low-latency model (~75 ms)
 DEFAULT_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"  # premade "George" voice, used if none is set
+KEEP_FILES = 20                         # only the newest 20 mp3s stay on disk
 
 
 def speak(text: str) -> str | None:
@@ -35,10 +36,30 @@ def speak(text: str) -> str | None:
     except httpx.HTTPError as e:
         print(f"[voice] ElevenLabs failed, phone will use its own voice: {e}")
         return None
-    AUDIO_DIR.mkdir(exist_ok=True)
+    if not r.content:  # an empty mp3 would make the Shortcut play silence
+        return None
     audio_id = uuid.uuid4().hex[:12]
-    (AUDIO_DIR / f"{audio_id}.mp3").write_bytes(r.content)
+    try:
+        AUDIO_DIR.mkdir(exist_ok=True)
+        (AUDIO_DIR / f"{audio_id}.mp3").write_bytes(r.content)
+    except OSError as e:  # disk full, no permission... fall back to the phone's voice
+        print(f"[voice] couldn't save audio, phone will use its own voice: {e}")
+        return None
+    cleanup()
     return audio_id
+
+
+def cleanup(keep: int | None = None) -> None:
+    """Delete old mp3s so audio/ doesn't grow forever. Keeps the `keep` newest."""
+    if keep is None:  # read it now (not at import) so tests/config can change it
+        keep = KEEP_FILES
+    try:
+        # Newest first, by "last modified" time.
+        files = sorted(AUDIO_DIR.glob("*.mp3"), key=lambda f: f.stat().st_mtime, reverse=True)
+        for old in files[keep:]:
+            old.unlink(missing_ok=True)
+    except OSError as e:  # cleanup is housekeeping: never let it break a reply
+        print(f"[voice] audio cleanup skipped: {e}")
 
 
 def audio_path(audio_id: str) -> Path | None:
