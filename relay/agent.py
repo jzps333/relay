@@ -38,8 +38,8 @@ class Cancelled(Exception):
 
 
 def _is_yes(text: str) -> bool:
-    t = text.lower().strip(" .!?")
-    return t in _YES or t.startswith(("yes", "yeah", "sure", "ok"))
+    # Use the shared safety check so "okay, don't" counts as NO, not yes.
+    return safety.is_yes(text) and not safety.is_no(text)
 
 
 def _describe_action(action: Action, screen: Screen) -> str:
