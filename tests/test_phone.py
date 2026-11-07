@@ -28,8 +28,11 @@ class FakeDevice:
     def app_current(self):
         return {"package": "com.example.app", "activity": ".Main"}
 
-    def screenshot(self, format="raw"):
-        return b"\x89PNG fake"
+    def screenshot(self):
+        # A tiny real Pillow image, like uiautomator2 returns.
+        from PIL import Image
+
+        return Image.new("RGB", (2, 2), "white")
 
     def window_size(self):
         return (1000, 2000)
@@ -103,7 +106,8 @@ def test_get_screen():
     assert screen.app == "com.example.app"
     assert len(screen.elements) == 4
     assert screen.screenshot_png is None
-    assert phone.get_screen(with_screenshot=True).screenshot_png == b"\x89PNG fake"
+    png = phone.get_screen(with_screenshot=True).screenshot_png
+    assert png.startswith(b"\x89PNG")  # real PNG bytes
 
 
 def test_tap_clicks_center():
