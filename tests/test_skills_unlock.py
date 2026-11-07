@@ -154,3 +154,17 @@ def test_popup_is_cleared_without_redoing_task(monkeypatch):
     task = agent.Task("navigate to starbucks", device_name="phone")
     assert task._clear_popups(phone, safety, skills) is True
     assert phone.calls == [("tap", 0)]
+
+
+def test_navigation_running_detects_results_list():
+    from relay.types import Screen, Element
+    phone = FakePhone()
+    phone.get_screen = lambda with_screenshot=False: Screen(device="phone", app="maps", elements=[
+        Element(0, "Sponsored", "text", (0, 0, 1, 1), False),
+        Element(1, "Directions", "button", (0, 0, 1, 1), True),
+        Element(2, "Call", "button", (0, 0, 1, 1), True)])
+    assert not skills.navigation_running(phone)
+    phone.get_screen = lambda with_screenshot=False: Screen(device="phone", app="maps", elements=[
+        Element(0, "Exit navigation", "button", (0, 0, 1, 1), True),
+        Element(1, "Re-center", "button", (0, 0, 1, 1), True)])
+    assert skills.navigation_running(phone)

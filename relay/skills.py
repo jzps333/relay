@@ -207,3 +207,16 @@ def find_blocker(device, wait: float = 2.0) -> str | None:
         # The app has drawn real content and nothing is in the way: done.
         if len(screen.elements) > 3 or time.monotonic() >= deadline:
             return None
+
+
+# Words that only show up once turn-by-turn navigation is actually running.
+def navigation_running(device) -> bool:
+    """True if Maps is in turn-by-turn mode (not a list of search results)."""
+    try:
+        screen = device.get_screen()
+    except Exception:
+        return True  # can't tell: don't make things worse
+    texts = " | ".join((el.text or "").lower() for el in screen.elements)
+    if "directions" in texts and ("sponsored" in texts or "add stop" in texts or "call" in texts):
+        return False  # that's the search results list
+    return any(w in texts for w in ("exit navigation", "close navigation", "re-center", "recenter"))

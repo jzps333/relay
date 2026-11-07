@@ -237,6 +237,15 @@ class Task:
                 # something is in the way, let the screen agent finish the job.
                 blocker = skills.find_blocker(device) if name in skills.CHECK_AFTER else None
                 if blocker is None:
+                    # A vague place ("nearest Starbucks") can land on a list of
+                    # results instead of a route. Then pick the closest and start.
+                    if name == "navigate" and not skills.navigation_running(device):
+                        self._narrate("Picking the closest one")
+                        self.goal = (f"{self.goal}. Google Maps is showing a list of places. Pick the "
+                                     f"CLOSEST one (skip 'Sponsored' unless it's also closest), tap "
+                                     f"Directions, then Start. Don't ask the user. Use done once "
+                                     f"turn-by-turn navigation is running, and say where and how far.")
+                        return self._loop(device, safety, routines, resumed=True)
                     return said
                 self._narrate(f"Something popped up ({blocker}), handling it")
                 # Usually the shortcut already worked and a popup just sits on top.
