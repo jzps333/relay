@@ -82,6 +82,17 @@ SKILL_TOOLS = [
         },
     },
     {
+        "name": "email_summary",
+        "description": "Read the user's Gmail inbox and give a short spoken summary "
+        "(e.g. 'summarize my emails', 'what came in overnight', 'anything important in my inbox').",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "timeframe": {"type": "string", "enum": ["overnight", "today", "this week", "recent"]},
+            },
+        },
+    },
+    {
         "name": "screen_agent",
         "description": "Use this for EVERYTHING ELSE: anything inside an app (messages, group chats, "
         "email, ordering, searching, settings), or any request with more than one part that the "
@@ -118,6 +129,18 @@ _TRAILING_FILLER = re.compile(r"[\s,]*\b(?:please|thanks|thank you|now)$", re.I)
 # Whole commands that map straight to a skill. The text must match EXACTLY
 # (after filler is removed), so "play my liked songs" never matches "play".
 _EXACT = {
+    # inbox summary
+    "summarize my emails": ("email_summary", {"timeframe": "recent"}),
+    "summarize my email": ("email_summary", {"timeframe": "recent"}),
+    "summarize my inbox": ("email_summary", {"timeframe": "recent"}),
+    "read my emails": ("email_summary", {"timeframe": "recent"}),
+    "check my email": ("email_summary", {"timeframe": "recent"}),
+    "check my emails": ("email_summary", {"timeframe": "recent"}),
+    "what's in my inbox": ("email_summary", {"timeframe": "recent"}),
+    "whats in my inbox": ("email_summary", {"timeframe": "recent"}),
+    "what came in overnight": ("email_summary", {"timeframe": "overnight"}),
+    "summarize my emails from overnight": ("email_summary", {"timeframe": "overnight"}),
+    "give me a summary of my inbox": ("email_summary", {"timeframe": "recent"}),
     # media
     "pause": ("media", {"action": "pause"}),
     "pause music": ("media", {"action": "pause"}),
@@ -360,3 +383,63 @@ def navigation_running(device) -> bool:
     if "directions" in texts and ("sponsored" in texts or "add stop" in texts or "call" in texts):
         return False  # that's the search results list
     return any(w in texts for w in ("exit navigation", "close navigation", "re-center", "recenter"))
+
+
+
+# ---------------------------------------------------------------------------
+# Inbox summary
+# ---------------------------------------------------------------------------
+
+def collect_inbox(device, pages: int = 3) -> list[str]:
+    """Read the Gmail inbox list off the screen, scrolling `pages` times.
+
+    Gmail's inbox rows expose sender, subject, snippet and time as text, so the
+    element list is enough; no screenshots needed (faster, cheaper).
+    """
+    from relay.types import Action
+
+    seen: list[str] = []
+    for page in range(pages):
+        screen = device.get_screen()
+        for el in screen.elements:
+            text = (el.text or "").strip()
+            if len(text) > 2 and text not in seen:
+                seen.append(text)
+        if page < pages - 1:
+            device.act(Action(kind="scroll", direction="down"), screen)
+            time.sleep(0.6)
+    return seen
+
+
+SUMMARY_SYSTEM = (
+    "You summarize an email inbox for someone who is DRIVING and will only HEAR your answer. "
+    "You get the raw text of the Gmail inbox list (senders, subjects, snippets, times; plus some "
+    "button labels to ignore). Rules:\n"
+    "- Start with how many emails matter, then the most important first (people > school/work > "
+    "bills/alerts > promotions). Lump promotions and newsletters into one short mention.\n"
+    "- Each item: who it's from and the gist in a few words.\n"
+    "- NEVER read out verification codes, one-time passwords, 2FA codes, or passwords; just say "
+    "'a login code from X'.\n"
+    "- Plain spoken sentences, no lists or symbols. Under 90 words.\n"
+    "- If the inbox looks empty or you can't tell, say so briefly."
+)
+
+
+def summarize_inbox(lines: list[str], timeframe: str = "recent") -> str:
+    """Turn the inbox text into a short spoken summary with the fast Claude model."""
+    from datetime import datetime
+
+    from relay.brains.claude import _client
+
+    now = datetime.now().strftime("%A %I:%M %p")
+    focus = {"overnight": "Only emails that arrived since about 6 PM yesterday.",
+             "today": "Only emails from today.",
+             "this week": "Emails from this week."}.get(timeframe, "The newest emails.")
+    response = _client().messages.create(
+        model=config.CLAUDE_FAST_MODEL,
+        max_tokens=400,
+        system=SUMMARY_SYSTEM,
+        messages=[{"role": "user", "content": f"It is {now}. {focus}\n\nInbox text:\n" + "\n".join(lines[:250])}],
+    )
+    text = " ".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
+    return text or "I couldn't read your inbox."

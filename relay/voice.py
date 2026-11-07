@@ -15,7 +15,7 @@ from relay import config
 AUDIO_DIR = Path("audio")
 TTS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 MODEL_ID = "eleven_flash_v2_5"          # ElevenLabs' low-latency model (~75 ms)
-DEFAULT_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"  # premade "George" voice, used if none is set
+DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # premade "Rachel": calm and clear, good for driving
 KEEP_FILES = 20                         # only the newest 20 mp3s stay on disk
 
 

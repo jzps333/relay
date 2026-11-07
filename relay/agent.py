@@ -227,6 +227,8 @@ class Task:
         picked = skills.route(self.goal, self.device_name)
         if picked is not None:
             name, params = picked
+            if name == "email_summary":
+                return self._email_summary(device, safety, skills, params)
             try:
                 said = skills.run(name, params, device)
             except Exception as e:
@@ -272,6 +274,15 @@ class Task:
 
         # 6. Plan + step loop.
         return self._loop(device, safety, routines, resumed)
+
+    def _email_summary(self, device, safety, skills, params: dict) -> str:
+        """Open Gmail, read the inbox list, and summarize it out loud."""
+        self._narrate("Checking your inbox")
+        device.start_app("gmail")
+        if skills.find_blocker(device) is not None and not self._clear_popups(device, safety, skills):
+            raise Cancelled("Gmail is showing something I can't get past. Please open it once yourself.")
+        lines = skills.collect_inbox(device)
+        return skills.summarize_inbox(lines, params.get("timeframe", "recent"))
 
     def _clear_popups(self, device, safety, skills, max_rounds: int = 4) -> bool:
         """Tap away popups one at a time. True once none are left."""

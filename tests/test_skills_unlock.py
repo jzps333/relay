@@ -168,3 +168,38 @@ def test_navigation_running_detects_results_list():
         Element(0, "Exit navigation", "button", (0, 0, 1, 1), True),
         Element(1, "Re-center", "button", (0, 0, 1, 1), True)])
     assert skills.navigation_running(phone)
+
+
+# ---- inbox summary ----
+
+def test_email_keywords():
+    assert skills.match_keywords("summarize my emails") == ("email_summary", {"timeframe": "recent"})
+    assert skills.match_keywords("hey relay, what came in overnight?") == ("email_summary", {"timeframe": "overnight"})
+
+
+def test_collect_inbox_reads_and_scrolls(monkeypatch):
+    from relay.types import Screen, Element
+    monkeypatch.setattr(skills.time, "sleep", lambda s: None)
+    pages = [["Prof. Lee", "Exam moved to Friday"], ["Prof. Lee", "Chase", "Your statement is ready"]]
+    phone = FakePhone()
+    phone.get_screen = lambda with_screenshot=False: Screen(device="phone", app="gmail", elements=[
+        Element(i, t, "text", (0, 0, 1, 1), False) for i, t in enumerate(pages.pop(0) if pages else [])])
+    phone.act = lambda a, s: phone.calls.append(("act", a.kind, a.direction))
+    lines = skills.collect_inbox(phone, pages=2)
+    assert lines == ["Prof. Lee", "Exam moved to Friday", "Chase", "Your statement is ready"]
+    assert phone.calls == [("act", "scroll", "down")]
+
+
+def test_summarize_inbox_uses_fast_model(monkeypatch):
+    seen = {}
+
+    def create(**kw):
+        seen.update(kw)
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text="You have 2 emails that matter.")])
+
+    monkeypatch.setattr("relay.brains.claude._client", lambda: SimpleNamespace(messages=SimpleNamespace(create=create)))
+    out = skills.summarize_inbox(["Prof. Lee", "Exam moved"], "overnight")
+    assert out == "You have 2 emails that matter."
+    assert seen["model"] == config.CLAUDE_FAST_MODEL
+    assert "6 PM yesterday" in seen["messages"][0]["content"]
+    assert "NEVER read out verification codes" in seen["system"]
