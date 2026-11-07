@@ -67,9 +67,24 @@ def _describe_action(action: Action, screen: Screen) -> str:
     return action.kind
 
 
+def strip_passphrase(text: str) -> tuple[str, bool]:
+    """Remove the unlock passphrase from what the user said.
+
+    Returns (text without the passphrase, whether it was said). The passphrase is
+    removed BEFORE anything goes to an AI, so it never shows up in prompts or logs.
+    """
+    phrase = config.RELAY_PASSPHRASE.strip().lower()
+    if not phrase:
+        return text, False
+    pattern = re.compile(r"\b" + r"\W*".join(map(re.escape, phrase.split())) + r"\b[\s,.!]*", re.I)
+    cleaned, n = pattern.subn("", text, count=1)
+    return cleaned.strip(" ,."), n > 0
+
+
 class Task:
     def __init__(self, text: str, device_name: str | None = None, last_device: str | None = None):
         self.id = uuid.uuid4().hex[:8]
+        text, self.passphrase_said = strip_passphrase(text)
         self.original_text = text
         if device_name:
             self.device_name, self.goal = device_name, text.strip()
@@ -188,11 +203,26 @@ class Task:
 
         device = router.get_device(self.device_name)
 
-        # 2. Fast path: just describe the screen.
+        # 2. Locked emulator? Unlock only if the user said the passphrase.
+        self._unlock_if_needed(device)
+        if not self.goal:
+            return "Unlocked. What would you like me to do?"
+
+        # 3. Fast path: just describe the screen.
         if _DESCRIBE.search(self.goal):
             return self._describe(device)
 
-        # 3. Saved routine?
+        # 4. Skills: instant shortcuts (Maps, music, open/close apps, volume).
+        from relay import skills
+        picked = skills.route(self.goal, self.device_name)
+        if picked is not None:
+            name, params = picked
+            try:
+                return skills.run(name, params, device)
+            except Exception as e:
+                print(f"[agent] skill {name} failed, using the screen agent: {e!r}")
+
+        # 5. Saved routine?
         routine: Routine | None = routines.find(self.goal)
         resumed = False
         if routine is not None:
@@ -205,8 +235,17 @@ class Task:
             self._narrate("Picking up from here")
             resumed = True
 
-        # 4. Plan + step loop.
+        # 6. Plan + step loop.
         return self._loop(device, safety, routines, resumed)
+
+    def _unlock_if_needed(self, device) -> None:
+        if not hasattr(device, "is_locked") or not device.is_locked():
+            return
+        if config.RELAY_PASSPHRASE and not self.passphrase_said:
+            raise Cancelled("Your phone is locked. Say your passphrase, then what you want.")
+        self._narrate("Unlocking")
+        if not device.unlock(config.EMULATOR_PIN):
+            raise Cancelled("I couldn't unlock the phone. Check the PIN in your settings file.")
 
     def _describe(self, device) -> str:
         from relay.brains import gemini, claude

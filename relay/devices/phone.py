@@ -33,7 +33,39 @@ APP_PACKAGES = {
     "maps": "com.google.android.apps.maps",
     "camera": "com.android.camera2",  # the stock emulator camera
     "photos": "com.google.android.apps.photos",
+    "google maps": "com.google.android.apps.maps",
+    "spotify": "com.spotify.music",
+    "snapchat": "com.snapchat.android",
+    "tiktok": "com.zhiliaoapp.musically",
+    "uber": "com.ubercab",
+    "waze": "com.waze",
+    "outlook": "com.microsoft.office.outlook",
+    "calendar": "com.google.android.calendar",
+    "clock": "com.google.android.deskclock",
+    "play store": "com.android.vending",
 }
+
+# Android key codes used by the skills (see `adb shell input keyevent`).
+KEYCODES = {
+    "wakeup": "KEYCODE_WAKEUP",
+    "enter": "KEYCODE_ENTER",
+    "play": "KEYCODE_MEDIA_PLAY",
+    "pause": "KEYCODE_MEDIA_PAUSE",
+    "play_pause": "KEYCODE_MEDIA_PLAY_PAUSE",
+    "next": "KEYCODE_MEDIA_NEXT",
+    "previous": "KEYCODE_MEDIA_PREVIOUS",
+    "volume_up": "KEYCODE_VOLUME_UP",
+    "volume_down": "KEYCODE_VOLUME_DOWN",
+    "mute": "KEYCODE_VOLUME_MUTE",
+}
+
+# Text in `dumpsys window` that means the lock screen is showing.
+_LOCKED_RE = re.compile(r"(mDreamingLockscreen|isKeyguardShowing|mShowingLockscreen|mKeyguardShowing)=true")
+
+
+def package_for(name: str) -> str:
+    """App name -> Android package. Unknown names are treated as a package already."""
+    return APP_PACKAGES.get(name.strip().lower(), name.strip())
 
 
 def parse_bounds(raw: str) -> tuple[int, int, int, int] | None:
@@ -192,6 +224,11 @@ class Phone:
             # uiautomator2 3.x returns a Pillow image (the old format="raw"
             # option was removed), so we save it into memory as PNG bytes.
             image = self.d.screenshot()
+            # Shrink it: the AI only needs to SEE the screen (taps use element
+            # bounds, not pixels), and a small image uploads much faster.
+            if image.width > config.SCREENSHOT_WIDTH:
+                ratio = config.SCREENSHOT_WIDTH / image.width
+                image = image.resize((config.SCREENSHOT_WIDTH, int(image.height * ratio)))
             buffer = io.BytesIO()
             image.save(buffer, format="PNG")
             png = buffer.getvalue()
@@ -247,10 +284,60 @@ class Phone:
 
         elif kind == "open_app":
             name = (action.text or "").strip()
-            package = APP_PACKAGES.get(name.lower(), name)  # unknown -> treat as package
-            self.d.app_start(package)
+            self.d.app_start(package_for(name))
 
         # "done" and "ask_user" are handled by the agent loop, not the device.
+
+    # ---- quick system actions (used by skills and unlocking) ----
+
+    def _shell(self, cmd: str) -> str:
+        """Run an adb shell command and return its text output."""
+        result = self.d.shell(cmd)
+        return getattr(result, "output", result) or ""
+
+    def key(self, name: str) -> None:
+        """Press a named key from KEYCODES, e.g. key("next")."""
+        self._shell(f"input keyevent {KEYCODES[name]}")
+
+    def start_app(self, name: str) -> None:
+        self.d.app_start(package_for(name))
+
+    def close_app(self, name: str) -> None:
+        self.d.app_stop(package_for(name))
+
+    def open_uri(self, uri: str, package: str | None = None) -> None:
+        """Open a link/intent URI, e.g. 'google.navigation:q=Starbucks'."""
+        cmd = f"am start -a android.intent.action.VIEW -d '{uri}'"
+        if package:
+            cmd += f" -p {package}"
+        self._shell(cmd)
+
+    def is_locked(self) -> bool:
+        """True if the lock screen is showing (or the screen is off)."""
+        try:
+            if not self.d.info.get("screenOn", True):
+                return True
+        except Exception:
+            pass
+        return bool(_LOCKED_RE.search(self._shell("dumpsys window")))
+
+    def unlock(self, pin: str = "") -> bool:
+        """Wake the screen, swipe up, type the PIN if there is one. Returns True if unlocked.
+
+        The PIN goes straight from .env to ADB. It never passes through an AI.
+        """
+        import time
+
+        self.key("wakeup")
+        time.sleep(0.4)
+        width, height = self.d.window_size()
+        self.d.swipe(width // 2, int(height * 0.85), width // 2, int(height * 0.25))
+        time.sleep(0.6)
+        if pin:
+            self._shell(f"input text {pin}")
+            self.key("enter")
+            time.sleep(0.8)
+        return not self.is_locked()
 
     def emergency_call(self) -> None:
         # DIAL (not CALL) opens the dialer with 911 typed in; the user presses

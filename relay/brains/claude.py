@@ -101,7 +101,8 @@ def _tool_input(response, tool_name: str) -> dict:
     raise ValueError(f"Claude did not call {tool_name}")
 
 
-def _call_tool(system: str, tool: dict, messages: list[dict], max_tokens: int = 1024) -> dict:
+def _call_tool(system: str, tool: dict, messages: list[dict], max_tokens: int = 1024,
+               model: str | None = None) -> dict:
     """Ask Claude to answer by calling `tool`, and return the tool's input.
 
     Newer Claude models reject a FORCED tool_choice, so we leave it on "auto",
@@ -109,9 +110,10 @@ def _call_tool(system: str, tool: dict, messages: list[dict], max_tokens: int = 
     in plain text anyway we ask once more.
     """
     name = tool["name"]
+    model = model or config.CLAUDE_MODEL
     system = f"{system}\n\nAlways answer by calling the {name} tool. Never reply with plain text."
     response = _client().messages.create(
-        model=config.CLAUDE_MODEL, max_tokens=max_tokens, system=system,
+        model=model, max_tokens=max_tokens, system=system,
         tools=[tool], tool_choice={"type": "auto"}, messages=messages,
     )
     try:
@@ -123,7 +125,7 @@ def _call_tool(system: str, tool: dict, messages: list[dict], max_tokens: int = 
             {"role": "user", "content": f"Please call the {name} tool now."},
         ]
         response = _client().messages.create(
-            model=config.CLAUDE_MODEL, max_tokens=max_tokens, system=system,
+            model=model, max_tokens=max_tokens, system=system,
             tools=[tool], tool_choice={"type": "auto"}, messages=retry,
         )
         return _tool_input(response, name)
@@ -166,6 +168,7 @@ def plan(goal: str, device: str) -> list[str]:
         "for operating a device. Each step is a few words, e.g. 'Open WhatsApp'.",
         PLAN_TOOL,
         [{"role": "user", "content": f"Device: {device}\nGoal: {goal}"}],
+        model=config.CLAUDE_FAST_MODEL,  # planning is easy; the fast model saves ~2 s
     )
     subgoals = [str(s).strip() for s in data.get("subgoals", [])]
     subgoals = [s for s in subgoals if s][:6]
