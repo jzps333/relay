@@ -21,6 +21,9 @@ TIPS: dict[str, str] = {
         "- To find a chat, use the search box at the top of the DM list and type the person's name.",
         "- In a chat, the text box is usually labelled \"Message...\"; tap it, type, then tap Send.",
         "- The bottom bar usually has Home, Search, Reels, and Profile tabs.",
+        "- To find a person, use the plain Search field and pick their account from the results. "
+        "Avoid \"Search with Meta AI\" / \"Ask Meta AI\": that's a chatbot, not people search.",
+        "- On a profile, \"Message\" / \"Send message\" just opens the chat; nothing is sent until Send.",
         NO_SIGN_IN,
     ]),
     # WhatsApp
