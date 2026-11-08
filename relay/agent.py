@@ -212,6 +212,8 @@ class Task:
         except Exception as e:  # never let a crash leave the user hanging in silence
             print(f"[agent] task {self.id} crashed: {e!r}")
             status, result = "error", "Sorry, something went wrong and I had to stop."
+            if "No device helper connected" in str(e):  # cloud mode, Mac helper not running
+                result = "Your Mac isn't connected. Start the device helper on your Mac and try again."
         # Dashboard first ("done"/"cancelled"/"error" + how long it took), THEN wake the
         # server, so the dashboard sees "done" before the server's spoken "answer".
         self._emit(status, message=result, seconds=round(time.monotonic() - self._started_at, 1))
