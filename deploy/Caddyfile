@@ -9,7 +9,7 @@
 	# Everything (the Shortcut's /command, /reply, /audio, the dashboard, AND the
 	# Mac helper's websocket /device/ws) goes to Relay on this server.
 	# reverse_proxy handles websocket upgrades by itself.
-	reverse_proxy localhost:8000 {
+	reverse_proxy 127.0.0.1:8000 {
 		# Send the dashboard's live event stream right away instead of buffering it.
 		flush_interval -1
 	}
