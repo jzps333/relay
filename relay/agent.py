@@ -433,6 +433,7 @@ class Task:
 
         repeats: dict[tuple, int] = {}  # (kind, element label, text) -> times done
         goal_finished = False
+        just_sent = False
         for subgoal in subgoals:
             if goal_finished:
                 break
@@ -448,6 +449,10 @@ class Task:
                 screen = device.get_screen(with_screenshot=True)
                 action = picker.choose_action(goal, subgoal, screen, history)
                 self._check_stop()
+                if just_sent and action.kind != "done":
+                    final = "Message sent."   # Send was tapped: that's the end of it
+                    goal_finished = True
+                    break
 
                 # Jev can say a middle step is done (fast, no Claude call). On the
                 # LAST step, Claude double-checks the screen and writes the summary.
@@ -519,9 +524,7 @@ class Task:
                 # Tapping Send IS the end of a "text/message/email someone" request.
                 # Stop here instead of wandering on (and saying "still working").
                 if action.kind == "tap" and _SEND_BUTTON.search(label or "") and _SEND_GOAL.search(goal):
-                    final = "Message sent."
-                    goal_finished = True
-                    break
+                    just_sent = True  # next pass: accept the brain's "done", or stop anyway
 
         # 5. It worked: remember it so next time is instant. Not when the steps
         # depended on a summary ("the second one" means something else tomorrow).

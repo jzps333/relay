@@ -337,3 +337,9 @@ def test_done_event_comes_before_task_finishes(env):
     env.actions = [Action("done", text="Ok.")]
     t = run("do it")
     assert t.finished and events.since(0)[-1]["kind"] == "done"
+
+
+def test_stops_after_send_even_if_brain_keeps_going(env):
+    env.actions = [Action("tap", element_id=0), Action("tap", element_id=0), Action("tap", element_id=0)]
+    t = run("text mom hi")
+    assert t.status == "done" and t.say() == "Message sent."
