@@ -62,6 +62,7 @@ def client(monkeypatch):
     monkeypatch.setattr(server, "_tasks", {})
     monkeypatch.setattr(server, "_current", None)
     monkeypatch.setattr(server, "_last_device", None)
+    monkeypatch.setattr(server, "_delivered", set())
     return TestClient(server.app)
 
 

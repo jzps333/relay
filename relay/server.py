@@ -186,6 +186,9 @@ _ENDINGS = {"no", "nope", "nah", "no thanks", "no thank you", "thats all", "that
             "thank you", "no that's it"}
 
 
+_delivered: set[str] = set()  # ids of finished tasks whose result was already spoken
+
+
 def is_ending(text: str) -> bool:
     t = re.sub(r"[^a-z' ]", "", (text or "").lower()).strip()
     return t == "" or t in _ENDINGS
@@ -218,6 +221,7 @@ def _respond(task, request: Request, conversation: bool = False) -> dict:
     elif not task.finished:
         next_step = "wait"    # still working: POST /reply with empty text to hear the next update
     else:
+        _delivered.add(task.id)  # its result has now been spoken once
         # finished: "more" = listen for another request; "done" = stop the Shortcut
         next_step = "more" if ask_more else "done"
         if not ask_more:
@@ -331,6 +335,10 @@ def talk(body: TalkIn, request: Request) -> dict:
     if task is None and not (body.text or "").strip() and _current is not None \
             and not _current.finished:
         task = _current
+    # The task finished between two check-ins: speak its result before anything else,
+    # so "Sent your email" isn't skipped straight to "Okay, talk soon."
+    if task is not None and task.finished and task.id not in _delivered:
+        return _respond(task, request, body.conversation)
     if task is not None and task.status == "waiting":
         task.reply(body.text)                     # answer to "Should I send it?"
         task.wait_until_settled(TALK_WAIT_SECONDS)

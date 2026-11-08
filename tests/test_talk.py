@@ -66,3 +66,13 @@ def test_new_run_with_silence_reports_busy_task(client):
     client.post("/talk", json={"text": "slow task"}, headers=AUTH)
     r = client.post("/talk", json={"text": ""}, headers=AUTH).json()
     assert r["next"] == "wait"
+
+
+def test_result_spoken_when_task_finishes_between_checkins(client):
+    r = client.post("/talk", json={"text": "slow task"}, headers=AUTH).json()
+    assert r["next"] == "wait"
+    FakeTask.instances[-1].status = "done"       # finished while the Shortcut was talking
+    r2 = client.post("/talk", json={"text": "", "session_id": r["session_id"]}, headers=AUTH).json()
+    assert r2["next"] == "more" and "Okay, talk soon" not in r2["say"]
+    r3 = client.post("/talk", json={"text": "", "session_id": r["session_id"]}, headers=AUTH).json()
+    assert r3["say"] == "Okay, talk soon."      # only now does silence end it
