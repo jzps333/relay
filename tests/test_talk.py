@@ -146,3 +146,16 @@ def test_slow_audio_doesnt_hold_up_the_reply(client, monkeypatch):
     release.set()
     assert r["audio_url"] == "" and r["next"] == "more"
     assert time.monotonic() - start < 2.0
+
+
+def test_resent_request_does_not_restart_task(client):
+    """Broken Session variable: the Shortcut keeps re-sending the first request."""
+    client.post("/talk", json={"text": "slow task"}, headers=AUTH)
+    r = client.post("/talk", json={"text": "slow task"}, headers=AUTH).json()
+    assert len(FakeTask.instances) == 1 and r["next"] == "wait"
+
+
+def test_resent_request_reasks_question(client):
+    client.post("/talk", json={"text": "confirm send"}, headers=AUTH)
+    r = client.post("/talk", json={"text": "Confirm send."}, headers=AUTH).json()
+    assert r["next"] == "reply" and FakeTask.instances[-1].replies == []

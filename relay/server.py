@@ -201,6 +201,10 @@ _ENDINGS = {"no", "nope", "nah", "no thanks", "no thank you", "thats all", "that
 _delivered: set[str] = set()  # ids of finished tasks whose result was already spoken
 
 
+def _norm(text: str | None) -> str:
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", (text or "").lower()).split())
+
+
 def is_ending(text: str) -> bool:
     t = re.sub(r"[^a-z' ]", "", (text or "").lower()).strip()
     return t == "" or t in _ENDINGS
@@ -421,6 +425,12 @@ def talk(body: TalkIn, request: Request) -> dict:
     if task is None and not (body.text or "").strip() and _current is not None \
             and not _current.finished:
         task = _current
+    # The Shortcut re-sent the SAME request (its Session/Answer variables didn't update).
+    # Don't restart the task, which would loop "Working on it" forever: treat it as a check-in.
+    same_as_current = (_current is not None and not _current.finished
+                       and _norm(body.text) and _norm(body.text) == _norm(_current.text))
+    if task is None and same_as_current:
+        task = _current
     # The task finished between two check-ins: speak its result before anything else,
     # so "Sent your email" isn't skipped straight to "Okay, talk soon."
     # A task we already gave up on (TASK_MAX_SECONDS) may still be "running" inside a
@@ -430,8 +440,8 @@ def talk(body: TalkIn, request: Request) -> dict:
     if task is not None and task.finished and task.id not in _delivered:
         return _respond(task, request, body.conversation)
     if task is not None and task.status == "waiting":
-        if not (body.text or "").strip():
-            # Dictation caught nothing: ask the question again rather than answering
+        if not (body.text or "").strip() or _norm(body.text) == _norm(task.text):
+            # Dictation caught nothing (or the old request was re-sent): ask the question again rather than answering
             # it with "" (which would cancel). agent._ask's REPLY_TIMEOUT still applies.
             return _respond(task, request, body.conversation)
         task.reply(body.text)                     # answer to "Should I send it?"
