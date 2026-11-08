@@ -35,6 +35,9 @@ Rules:
   say exactly what appeared. Never try to get around these.
 - Allow permissions the task needs (location for directions, mic for voice).
   Never sign in to anything.
+- Stay inside the app the request is about. Never type an app's name into a Google or
+  web search bar, and don't go to the home screen to look for it: Relay already opened
+  the right app. Use that app's own search (magnifier) to find things.
 - When the goal is finished, use done and put a short spoken summary in `text`
   (one sentence, plain words, it will be read aloud).
 """

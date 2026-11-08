@@ -59,6 +59,16 @@ TIPS: dict[str, str] = {
         "- On a playlist or Liked Songs, look for the shuffle button next to the big Play button.",
         NO_SIGN_IN,
     ]),
+    # YouTube Music
+    "com.google.android.apps.youtube.music": "\n".join([
+        "- To play something, tap the search (magnifier) icon at the TOP RIGHT, type the song, "
+        "artist or mood (e.g. \"lo-fi\"), press enter, then tap the first song or playlist result.",
+        "- Do NOT browse the Home or Explore tabs looking for it, and never leave the app: "
+        "always use the search icon.",
+        "- Once music is playing (a mini player with a pause button at the bottom), use done.",
+        "- If a \"Try Premium\" or similar popup appears, tap \"No thanks\" / close it.",
+        NO_SIGN_IN,
+    ]),
     # DoorDash
     "com.dd.doordash": "\n".join([
         "- NEVER place an order. Stop at the checkout screen and use ask_user so Relay asks the user first.",
