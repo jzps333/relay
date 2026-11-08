@@ -19,7 +19,7 @@ def test_not_repeat(said):
 def test_repeat_returns_last_final_answer(client):
     client.post("/command", json={"text": "open maps"}, headers=AUTH)
     r = client.post("/command", json={"text": "say that again"}, headers=AUTH)
-    assert r.json() == {"say": "Did: open maps", "audio_url": None, "needs_reply": False,
+    assert r.json() == {"say": "Did: open maps", "audio_url": "", "needs_reply": False,
                         "next": "done", "session_id": ""}
     assert len(FakeTask.instances) == 1  # no new task for the repeat
 

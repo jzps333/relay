@@ -144,5 +144,5 @@ def test_slow_audio_doesnt_hold_up_the_reply(client, monkeypatch):
     start = time.monotonic()
     r = client.post("/talk", json={"text": "open maps"}, headers=AUTH).json()
     release.set()
-    assert r["audio_url"] is None and r["next"] == "more"
+    assert r["audio_url"] == "" and r["next"] == "more"
     assert time.monotonic() - start < 2.0

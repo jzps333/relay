@@ -277,7 +277,7 @@ def _say_only(say: str, request: Request) -> dict:
     """A reply that isn't tied to a task (e.g. "Okay, talk soon.")."""
     say = plain_text(say)
     audio_id = _speak(say)
-    audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else None
+    audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else ""  # "" not null: Shortcuts treats null as "has a value"
     return {"say": say, "audio_url": audio_url, "needs_reply": False, "next": "done", "session_id": ""}
 
 
@@ -294,7 +294,7 @@ def _respond(task, request: Request, conversation: bool = False) -> dict:
         _remember_answer(say)  # "repeat that" repeats the answer, not the question
         say = f"{say} Anything else?"
     audio_id = _speak(say)
-    audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else None
+    audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else ""  # "" not null: Shortcuts treats null as "has a value"
     if task.status == "waiting":
         next_step = "reply"   # Relay asked a question: listen, then POST /reply with the answer
     elif not task.finished:
@@ -325,7 +325,7 @@ def _repeat_response(request: Request) -> dict:
     say = _last_answer or NOTHING_TO_REPEAT
     events.publish("repeat", say=say)  # live dashboard
     audio_id = _speak(say)
-    audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else None
+    audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else ""  # "" not null: Shortcuts treats null as "has a value"
     return {"say": say, "audio_url": audio_url, "needs_reply": False, "next": "done", "session_id": ""}
 
 
@@ -516,8 +516,8 @@ def stop() -> dict:
     task = _current
     if task is not None and not task.finished:
         task.stop()
-        return {"say": "Stopping.", "audio_url": None, "needs_reply": False, "next": "done", "session_id": task.id}
-    return {"say": "Nothing is running.", "audio_url": None, "needs_reply": False, "next": "done", "session_id": ""}
+        return {"say": "Stopping.", "audio_url": "", "needs_reply": False, "next": "done", "session_id": task.id}
+    return {"say": "Nothing is running.", "audio_url": "", "needs_reply": False, "next": "done", "session_id": ""}
 
 
 @app.get("/audio/{audio_id}.mp3", dependencies=[Depends(require_token)])

@@ -80,7 +80,7 @@ def test_command_returns_final_answer(client):
     r = client.post("/command", json={"text": "open maps", "device": None}, headers=AUTH)
     assert r.status_code == 200
     body = r.json()
-    assert body == {"say": "Did: open maps", "audio_url": None, "needs_reply": False, "next": "done", "session_id": "t0"}
+    assert body == {"say": "Did: open maps", "audio_url": "", "needs_reply": False, "next": "done", "session_id": "t0"}
 
 
 def test_bad_device_rejected(client):
@@ -143,7 +143,7 @@ def test_say_is_plain_text(client, monkeypatch):
     monkeypatch.setattr(FakeTask, "say", lambda self: "**Sent** it:\n- to `Mom`\n# done")
     body = client.post("/command", json={"text": "x"}, headers=AUTH).json()
     assert body["say"] == "Sent it: to Mom done"
-    assert body["audio_url"] is None
+    assert body["audio_url"] == ""
 
 
 def test_plain_text_never_empty():
