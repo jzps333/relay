@@ -327,6 +327,11 @@ def talk(body: TalkIn, request: Request) -> dict:
     if task is not None and not task.finished:
         task.wait_until_settled(WAIT_SECONDS)     # still working: next update
         return _respond(task, request, body.conversation)
+    if not (body.text or "").strip() and not body.session_id:
+        # Started, but dictation caught nothing: say so and listen again.
+        r = _say_only("Sorry, I didn't catch that. Go ahead.", request)
+        r["next"] = "more"
+        return r
     if is_ending(body.text):
         events.publish("heard", text=body.text, device=body.device)
         return _say_only("Okay, talk soon.", request)

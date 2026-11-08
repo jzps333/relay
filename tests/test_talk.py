@@ -46,3 +46,8 @@ def test_repeat_skips_the_question(client):
     client.post("/talk", json={"text": "open maps"}, headers=AUTH)
     r = client.post("/command", json={"text": "repeat that"}, headers=AUTH).json()
     assert r["say"] == "Did: open maps"
+
+
+def test_nothing_heard_at_start_asks_again(client):
+    r = client.post("/talk", json={"text": ""}, headers=AUTH).json()
+    assert r["next"] == "more" and "didn't catch" in r["say"]
