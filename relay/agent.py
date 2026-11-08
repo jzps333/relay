@@ -20,7 +20,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
-from relay import config, router
+from relay import config, context, router
 from relay.types import Action, Screen
 
 if TYPE_CHECKING:  # only for type hints; the real import happens lazily in _work()
@@ -236,6 +236,8 @@ class Task:
                 return self._email_summary(device, safety, skills, params)
             if name == "news_briefing":
                 return self._news_briefing(device, safety, skills, params)
+            if name == "notifications":
+                return self._notifications(device, skills)
             try:
                 said = skills.run(name, params, device)
             except Exception as e:
@@ -289,7 +291,18 @@ class Task:
         if skills.find_blocker(device) is not None and not self._clear_popups(device, safety, skills):
             raise Cancelled("Gmail is showing something I can't get past. Please open it once yourself.")
         lines = skills.collect_inbox(device)
-        return skills.summarize_inbox(lines, params.get("timeframe", "recent"))
+        said = skills.summarize_inbox(lines, params.get("timeframe", "recent"))
+        context.remember(said, lines, "email")  # so "reply to the second one" works next
+        return said
+
+    def _notifications(self, device, skills) -> str:
+        """Read the notification shade (no screen tapping) and summarize it out loud."""
+        self._narrate("Checking your notifications")
+        items = device.notifications()
+        said = skills.summarize_notifications(items)
+        if items:
+            context.remember(said, skills.notification_lines(items), "notifications")
+        return said
 
     def _run_workflow(self, device, safety, skills, flow) -> str:
         """Run each step of a workflow and join the spoken results in order."""
@@ -300,6 +313,8 @@ class Task:
                 said = self._email_summary(device, safety, skills, step.params)
             elif step.skill == "news_briefing":
                 said = self._news_briefing(device, safety, skills, step.params)
+            elif step.skill == "notifications":
+                said = self._notifications(device, skills)
             elif step.skill in skills.SKILL_NAMES:
                 said = skills.run(step.skill, step.params, device)
             else:
@@ -318,7 +333,9 @@ class Task:
         lines = skills.collect_x(device, feed, accounts)
         if skills.find_blocker(device, wait=0.5) is not None and not self._clear_popups(device, safety, skills):
             raise Cancelled("X is showing something I can't get past. Please open it once yourself.")
-        return skills.summarize_news(lines, params.get("topic", "markets"))
+        said = skills.summarize_news(lines, params.get("topic", "markets"))
+        context.remember(said, lines, "news")
+        return said
 
     def _clear_popups(self, device, safety, skills, max_rounds: int = 4) -> bool:
         """Tap away popups one at a time. True once none are left."""
@@ -363,21 +380,25 @@ class Task:
     def _loop(self, device, safety, routines, resumed: bool = False) -> str:
         from relay.brains import claude, picker
 
+        # If we just read the user a summary (emails, notifications, news), put it
+        # in front of the goal so "reply to the second one" makes sense to the brains.
+        goal = context.add_to_goal(self.goal)  # grows with the user's answers to ask_user questions
+        used_context = goal != self.goal
+
         if resumed:
             # A routine already did part of the job; a fresh plan would redo those
             # steps, so give the picker one sub-goal: finish from the current screen.
-            subgoals = [f"Finish this from the current screen (earlier steps are done): {self.goal}"]
+            subgoals = [f"Finish this from the current screen (earlier steps are done): {goal}"]
         else:
             try:
-                subgoals = claude.plan(self.goal, self.device_name) or [self.goal]
+                subgoals = claude.plan(goal, self.device_name) or [goal]
             except Exception as e:
                 print(f"[agent] planning failed, using the goal as one step: {e!r}")
-                subgoals = [self.goal]
+                subgoals = [goal]
         blocked = getattr(safety, "BLOCKED_PREFIX", "BLOCKED:")
 
         history: list[Action] = []
         done_steps: list[tuple[Screen, Action]] = []  # for saving a routine
-        goal = self.goal  # grows with the user's answers to ask_user questions
         steps = 0
         final = "Done."
 
@@ -460,8 +481,9 @@ class Task:
                 self._narrate(_describe_action(action, screen))
                 time.sleep(SETTLE_SECONDS)  # let the screen finish changing before reading it again
 
-        # 5. It worked: remember it so next time is instant.
-        if done_steps:
+        # 5. It worked: remember it so next time is instant. Not when the steps
+        # depended on a summary ("the second one" means something else tomorrow).
+        if done_steps and not used_context:
             try:
                 routines.save(self.goal, self.device_name, done_steps)
             except Exception as e:

@@ -93,6 +93,12 @@ SKILL_TOOLS = [
         },
     },
     {
+        "name": "notifications",
+        "description": "Read the phone's notifications out loud: new texts, messages and app alerts "
+        "(e.g. 'read my notifications', 'any new messages', 'what did I miss', 'read my texts').",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "news_briefing",
         "description": "Read posts on X (Twitter) and give a short spoken briefing: overnight market/"
         "macro news from news accounts, or what's new in the user's Following feed. Use for "
@@ -170,6 +176,21 @@ _EXACT = {
     "what came in overnight": ("email_summary", {"timeframe": "overnight"}),
     "summarize my emails from overnight": ("email_summary", {"timeframe": "overnight"}),
     "give me a summary of my inbox": ("email_summary", {"timeframe": "recent"}),
+    # notifications
+    "read my notifications": ("notifications", {}),
+    "read notifications": ("notifications", {}),
+    "read me my notifications": ("notifications", {}),
+    "any notifications": ("notifications", {}),
+    "any new notifications": ("notifications", {}),
+    "do i have any notifications": ("notifications", {}),
+    "check my notifications": ("notifications", {}),
+    "any new messages": ("notifications", {}),
+    "any messages": ("notifications", {}),
+    "do i have any new messages": ("notifications", {}),
+    "what did i miss": ("notifications", {}),
+    "read my texts": ("notifications", {}),
+    "read my messages": ("notifications", {}),
+    "any new texts": ("notifications", {}),
     # media
     "pause": ("media", {"action": "pause"}),
     "pause music": ("media", {"action": "pause"}),
@@ -469,6 +490,59 @@ def summarize_inbox(lines: list[str], timeframe: str = "recent") -> str:
     log.info("inbox: read %d lines", len(lines))
     return _spoken_summary(SUMMARY_SYSTEM, f"It is {now}. {focus}\n\nInbox text:\n" + "\n".join(lines[:250]),
                            "I couldn't read your inbox.")
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+NOTIFY_SYSTEM = (
+    "You read a phone's notifications out loud to someone who is DRIVING or blind and will only "
+    "HEAR your answer. You get one line per notification: how long ago, the app's package name, "
+    "the title (usually the sender) and the text. Rules:\n"
+    "- People and messages first: say who and what, e.g. 'You got a text from Mom: where are you?'\n"
+    "- Then other alerts, most important first. Group app spam, promotions and repeats into one "
+    "short mention ('plus a few alerts from Instagram').\n"
+    "- Say app names in plain words (Messages, WhatsApp, Gmail), never package names.\n"
+    "- NEVER read out verification codes, one-time passwords, 2FA codes, or passwords; just say "
+    "'a login code from X'.\n"
+    "- Plain spoken sentences, no lists or symbols. Under 80 words."
+)
+
+NO_NOTIFICATIONS = "No new notifications."
+
+
+def _ago(ms: int | None, now: float) -> str:
+    """Post time in ms -> '5 min ago' (or '' if unknown)."""
+    if not ms:
+        return ""
+    minutes = max(0, int(now - ms / 1000) // 60)
+    if minutes < 1:
+        return "just now"
+    if minutes < 60:
+        return f"{minutes} min ago"
+    return f"{minutes // 60} h ago"
+
+
+def notification_lines(items: list[dict], now: float | None = None) -> list[str]:
+    """One readable line per notification, for the AI (and for follow-up context)."""
+    now = time.time() if now is None else now
+    lines = []
+    for n in items:
+        when = _ago(n.get("time"), now)
+        head = f"[{when}] " if when else ""
+        lines.append(f"{head}{n.get('package', '')} | {n.get('title', '')}: {n.get('text', '')}".strip())
+    return lines
+
+
+def summarize_notifications(items: list[dict]) -> str:
+    """Turn the notification list into a short spoken summary."""
+    if not items:
+        return NO_NOTIFICATIONS  # no AI needed
+    lines = notification_lines(items)
+    log.info("notifications: read %d", len(lines))
+    return _spoken_summary(NOTIFY_SYSTEM, "Notifications, newest first:\n" + "\n".join(lines[:100]),
+                           "I couldn't read your notifications.")
 
 
 # ---------------------------------------------------------------------------

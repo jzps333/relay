@@ -176,6 +176,112 @@ def parse_hierarchy(xml: str) -> list[Element]:
     return elements
 
 
+# ---------------------------------------------------------------------------
+# Notifications: parsing `adb shell dumpsys notification --noredact`
+# ---------------------------------------------------------------------------
+# The dump has one block per notification, starting with a line like
+#   NotificationRecord(0x0a1b2c3d: pkg=com.whatsapp user=UserHandle{0} id=1 ...
+# and, inside it, lines such as
+#   flags=0x10
+#   android.title=String (Mom)              <- newer Android
+#   android.text=where are you? (java.lang.String)   <- older Android
+#   mCreationTimeMs=1731090000000
+
+# Apps whose notifications are never worth reading out loud.
+SKIP_NOTIFICATION_PACKAGES = {
+    "android",                      # "USB debugging connected" and similar
+    "com.android.systemui",         # screenshots, battery, etc.
+    "com.android.shell",            # bug reports
+    "com.github.uiautomator",       # Relay's own helper app (uiautomator2)
+    "com.github.uiautomator.test",
+}
+
+# Notification flag bits (from Android's Notification class).
+_FLAG_ONGOING = 0x02            # "Playing music", "Navigation running"
+_FLAG_FOREGROUND_SERVICE = 0x40  # an app saying "I'm running in the background"
+_FLAG_GROUP_SUMMARY = 0x200     # "3 new messages" header; the real messages are separate
+
+_RECORD_RE = re.compile(r"NotificationRecord\(0x[0-9a-f]+: pkg=(\S+)")
+_KEY_RE = re.compile(r"\bkey=(\S+)")
+_FLAGS_RE = re.compile(r"\bflags=(0x[0-9a-fA-F]+)")
+_TIME_RE = re.compile(r"\b(?:mCreationTimeMs|postTime|when)=(\d{10,})")
+# Everything after these headings is snoozed or old history, not "new".
+_END_SECTIONS = ("Snoozed notifications", "mArchive", "Notification Archive")
+
+
+def _extra_value(raw: str) -> str:
+    """Clean an extras value: 'String (Mom)' or 'Mom (java.lang.String)' -> 'Mom'."""
+    raw = raw.strip()
+    if raw in ("", "null"):
+        return ""
+    m = re.fullmatch(r"\w*(?:String|CharSequence)\w* \((.*)\)", raw, re.S)   # newer format
+    if m:
+        return m.group(1).strip()
+    m = re.fullmatch(r"(.*) \((?:java\.lang\.|android\.text\.)?\w*String\w*\)", raw, re.S)  # older
+    if m:
+        return m.group(1).strip()
+    return raw
+
+
+def _extra(block: str, name: str) -> str:
+    """Value of one extras field in a notification block, e.g. android.title."""
+    m = re.search(rf"^\s*{re.escape(name)}=(.*)$", block, re.M)
+    return _extra_value(m.group(1)) if m else ""
+
+
+def parse_notifications(dump: str) -> list[dict]:
+    """Turn a `dumpsys notification --noredact` dump into a list of dicts.
+
+    Each dict: {"package", "title", "text", "time"} where time is the post time
+    in milliseconds since 1970 (or None if the dump didn't show it).
+    Ongoing, foreground-service, group-summary and system notifications are
+    skipped. Newest first.
+    """
+    for heading in _END_SECTIONS:
+        cut = dump.find(heading)
+        if cut != -1:
+            dump = dump[:cut]
+
+    starts = [m.start() for m in _RECORD_RE.finditer(dump)]
+    results: list[dict] = []
+    seen_keys: set[str] = set()
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(dump)
+        block = dump[start:end]
+        package = _RECORD_RE.match(block).group(1)
+        if package in SKIP_NOTIFICATION_PACKAGES:
+            continue
+
+        # The same notification can be listed twice (e.g. "Enqueued" list).
+        key_match = _KEY_RE.search(block)
+        key = key_match.group(1) if key_match else block[:200]
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        flags_match = _FLAGS_RE.search(block)
+        flags = int(flags_match.group(1), 16) if flags_match else 0
+        if flags & (_FLAG_ONGOING | _FLAG_FOREGROUND_SERVICE | _FLAG_GROUP_SUMMARY):
+            continue
+
+        title = _extra(block, "android.title")
+        # The long version (bigText) has the whole message; fall back to the short one.
+        text = _extra(block, "android.bigText") or _extra(block, "android.text")
+        if not title and not text:
+            continue
+
+        time_match = _TIME_RE.search(block)
+        results.append({
+            "package": package,
+            "title": title,
+            "text": text,
+            "time": int(time_match.group(1)) if time_match else None,
+        })
+
+    results.sort(key=lambda n: n["time"] or 0, reverse=True)  # newest first
+    return results
+
+
 def _center(el: Element) -> tuple[int, int]:
     x1, y1, x2, y2 = el.bounds
     return ((x1 + x2) // 2, (y1 + y2) // 2)
@@ -318,6 +424,11 @@ class Phone:
         """Give an app location permission (dev-device shortcut, no popup)."""
         for perm in ("ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"):
             self._shell(f"pm grant {package} android.permission.{perm}")
+
+    def notifications(self) -> list[dict]:
+        """The notifications in the shade right now (see parse_notifications)."""
+        # --noredact shows the real message text instead of "Contents hidden".
+        return parse_notifications(self._shell("dumpsys notification --noredact"))
 
     def is_locked(self) -> bool:
         """True if the lock screen is showing (or the screen is off)."""

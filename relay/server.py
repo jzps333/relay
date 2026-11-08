@@ -5,7 +5,7 @@ Run it:   python -m relay.server
    or:    uvicorn relay.server:app --host 0.0.0.0 --port 8000
 
 GET  /health                         -> {"ok": true, ...}  (no token needed; test it in Safari)
-POST /command {"text", "device"}  -> start a task, wait up to ~25 s, return what to say
+POST /command {"text", "device"}  -> start a task, wait up to ~45 s, return what to say
 POST /reply   {"session_id","text"} -> answer a yes/no (or any) question the task asked
 POST /stop                           -> stop whatever is running
 GET  /audio/{id}.mp3                 -> ElevenLabs audio for a reply
@@ -24,7 +24,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from relay import agent, config, router, voice
+from relay import agent, config, router, skills, voice
 
 # How long one HTTP request waits for the task before answering "still working".
 # Shortcuts' Get Contents of URL waits about 60 s, so 45 s leaves headroom and lets
@@ -40,6 +40,22 @@ _lock = threading.Lock()
 _tasks: dict[str, "agent.Task"] = {}   # session_id -> Task
 _current: "agent.Task | None" = None   # the one task allowed to run at a time
 _last_device: str | None = None        # so "scroll down" goes to the device you just used
+_last_answer: str | None = None        # last final answer we spoke, for "repeat that"
+
+# "Repeat that": answered instantly from _last_answer, no task, no AI.
+# Matched after skills._clean() removes filler ("hey relay, can you ... please").
+REPEAT_PHRASES = {
+    "repeat", "repeat that", "repeat it", "repeat yourself", "repeat that again",
+    "say that again", "say it again", "say again", "come again",
+    "what did you say", "what did you just say", "what was that",
+    "sorry what", "pardon", "one more time",
+}
+NOTHING_TO_REPEAT = "I haven't said anything yet."
+
+
+def is_repeat(text: str) -> bool:
+    """True if the user just wants the last answer again."""
+    return skills._clean(text).lower() in REPEAT_PHRASES
 
 
 # --- auth ------------------------------------------------------------------
@@ -116,6 +132,7 @@ def _respond(task, request: Request) -> dict:
         next_step = "wait"    # still working: POST /reply with empty text to hear the next update
     else:
         next_step = "done"    # finished: stop the Shortcut
+        _remember_answer(say)
     return {
         "say": say,
         "audio_url": audio_url,
@@ -123,6 +140,19 @@ def _respond(task, request: Request) -> dict:
         "next": next_step,
         "session_id": task.id,
     }
+
+
+def _remember_answer(say: str) -> None:
+    global _last_answer
+    _last_answer = say
+
+
+def _repeat_response(request: Request) -> dict:
+    """Speak the last final answer again (instant: no task, no AI)."""
+    say = _last_answer or NOTHING_TO_REPEAT
+    audio_id = voice.speak(say)
+    audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else None
+    return {"say": say, "audio_url": audio_url, "needs_reply": False, "next": "done", "session_id": ""}
 
 
 # The emulator check runs in a helper thread so /health can give up after a
@@ -172,6 +202,9 @@ def command(body: CommandIn, request: Request) -> dict:
     global _current, _last_device
     if body.device not in (None, "phone", "mac"):
         raise HTTPException(status_code=400, detail="device must be phone, mac or null")
+    # "Repeat that" never starts a task, and never stops the one that's running.
+    if is_repeat(body.text):
+        return _repeat_response(request)
     with _lock:
         if _current is not None and not _current.finished:
             _current.stop()  # a new command replaces the old one
