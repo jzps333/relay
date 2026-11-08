@@ -53,7 +53,7 @@ def _gemini(audio: bytes, filename: str) -> str:
     response = gemini._client().models.generate_content(
         model=config.GEMINI_MODEL,
         contents=[types.Part.from_bytes(data=audio, mime_type=guess_mime(filename)), GEMINI_PROMPT],
-        config=types.GenerateContentConfig(max_output_tokens=300, temperature=0.0),
+        config=types.GenerateContentConfig(max_output_tokens=2048, temperature=0.0)  # room for thinking tokens,
     )
     return (response.text or "").strip()
 

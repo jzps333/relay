@@ -43,7 +43,7 @@ def describe_screen(screen: Screen) -> str:
     response = _client().models.generate_content(
         model=config.GEMINI_MODEL,
         contents=contents,
-        config=types.GenerateContentConfig(max_output_tokens=300, temperature=0.3),
+        config=types.GenerateContentConfig(max_output_tokens=2048, temperature=0.3)  # room for thinking tokens,
     )
     text = (response.text or "").strip()
     if not text:

@@ -13,7 +13,7 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 RELAY_TOKEN = os.getenv("RELAY_TOKEN", "change-me")
 
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")  # 2.5-flash is closed to new users
 JEV_MIN_CONFIDENCE = float(os.getenv("JEV_MIN_CONFIDENCE", "0.45"))
 MAX_STEPS = int(os.getenv("MAX_STEPS", "25"))
 DEFAULT_DEVICE = os.getenv("DEFAULT_DEVICE", "phone")
