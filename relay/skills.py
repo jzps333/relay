@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+import os
 import time
 from urllib.parse import quote
 
@@ -557,6 +558,9 @@ def summarize_notifications(items: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 X_PACKAGE = "com.twitter.android"
+CHROME_PACKAGE = "com.android.chrome"
+# X sometimes refuses logins in its app on an emulator. X_IN_BROWSER=1 reads x.com in Chrome instead.
+X_IN_BROWSER = os.getenv("X_IN_BROWSER", "0") == "1"
 
 NEWS_SYSTEM = (
     "You turn raw text read off the X (Twitter) app into a short spoken news briefing for "
@@ -586,16 +590,21 @@ def _tap_text(device, label: str) -> bool:
 def collect_x(device, feed: str, accounts: list[str], pages: int | None = None) -> list[str]:
     """Read posts off X: specific accounts' profiles, or the Following timeline."""
     lines: list[str] = []
+    package = CHROME_PACKAGE if X_IN_BROWSER else X_PACKAGE
     if feed == "following" or not accounts:
-        device.start_app("x")
-        time.sleep(2.0)
+        if X_IN_BROWSER:
+            device.open_uri("https://x.com/home", package=CHROME_PACKAGE)
+            time.sleep(3.0)
+        else:
+            device.start_app("x")
+            time.sleep(2.0)
         _tap_text(device, "Following")  # the timeline tab; "For you" is the default
         lines += collect_screen_text(device, pages)
     else:
         pages = pages or config.NEWS_PAGES_PER_ACCOUNT
         for handle in accounts[:config.MAX_NEWS_ACCOUNTS]:  # cap it so a briefing stays quick
             # Opening the profile link jumps straight to that account in the X app.
-            device.open_uri(f"https://x.com/{handle}", package=X_PACKAGE)
+            device.open_uri(f"https://x.com/{handle}", package=package)
             time.sleep(2.5)
             lines.append(f"--- posts from @{handle} ---")
             lines += collect_screen_text(device, pages)
