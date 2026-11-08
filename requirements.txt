@@ -2,6 +2,7 @@
 fastapi
 uvicorn
 httpx
+python-multipart                          # /talk/audio form uploads from the Shortcut
 python-dotenv
 websockets>=14                            # cloud mode: Mac device helper (relay/device_helper.py)
 

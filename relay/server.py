@@ -6,6 +6,7 @@ Run it:   python -m relay.server
 
 GET  /health                         -> {"ok": true, ...}  (no token needed; test it in Safari)
 POST /command {"text", "device"}  -> start a task, wait up to ~45 s, return what to say
+POST /talk/audio (recording)         -> /talk, but transcribes a recorded audio file first
 POST /reply   {"session_id","text"} -> answer a yes/no (or any) question the task asked
 POST /stop                           -> stop whatever is running
 GET  /audio/{id}.mp3                 -> ElevenLabs audio for a reply
@@ -33,7 +34,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from relay import agent, config, events, remote, router, safety, skills, voice
+from relay import agent, config, events, remote, router, safety, skills, stt, voice
 
 # How long one HTTP request waits for the task before answering "still working".
 # Shortcuts' Get Contents of URL waits about 60 s, so 45 s leaves headroom and lets
@@ -358,6 +359,54 @@ def talk(body: TalkIn, request: Request) -> dict:
         events.publish("heard", text=body.text, device=body.device)
         return _say_only("Okay, talk soon.", request)
     return _start(body.text, body.device, request, body.conversation)
+
+
+MIN_AUDIO_BYTES = 1000  # anything smaller is an empty/aborted recording: treat as silence
+
+
+def _as_bool(value, default: bool = True) -> bool:
+    if value is None or str(value).strip() == "":
+        return default
+    return str(value).strip().lower() not in ("false", "0", "no", "off")
+
+
+@app.post("/talk/audio", dependencies=[Depends(require_token)])
+async def talk_audio(request: Request) -> dict:
+    """Like /talk, but the Shortcut sends a recording instead of dictated text.
+
+    Accepts either multipart form (field `file`, optional `session_id`, `conversation`,
+    `device`) or a raw audio body (audio/* or application/octet-stream) with those
+    fields as query params. The reply is /talk's, plus `heard` (the transcript).
+    """
+    params = dict(request.query_params)
+    content_type = (request.headers.get("content-type") or "").lower()
+    audio, filename = b"", "audio.m4a"
+    if content_type.startswith("multipart/form-data") or \
+            content_type.startswith("application/x-www-form-urlencoded"):
+        form = await request.form()
+        for key in ("session_id", "conversation", "device"):
+            if form.get(key) is not None and not hasattr(form.get(key), "read"):
+                params[key] = form.get(key)
+        upload = form.get("file")
+        if upload is not None and hasattr(upload, "read"):
+            audio = await upload.read()
+            filename = upload.filename or filename
+    else:
+        audio = await request.body()
+        ext = {"audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3",
+               "audio/x-caf": "caf"}.get(content_type.split(";")[0].strip())
+        if ext:
+            filename = f"audio.{ext}"
+    text = ""
+    if len(audio) >= MIN_AUDIO_BYTES:
+        text = await run_in_threadpool(stt.transcribe, audio, filename)
+    print(f"[talk/audio] bytes={len(audio)} transcribed={text!r}", flush=True)
+    body = TalkIn(text=text, session_id=params.get("session_id") or "",
+                  device=params.get("device") or None,
+                  conversation=_as_bool(params.get("conversation"), True))
+    result = await run_in_threadpool(talk, body, request)
+    result["heard"] = text
+    return result
 
 
 @app.post("/reply", dependencies=[Depends(require_token)])
