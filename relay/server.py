@@ -33,12 +33,14 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from relay import agent, config, events, remote, router, skills, voice
+from relay import agent, config, events, remote, router, safety, skills, voice
 
 # How long one HTTP request waits for the task before answering "still working".
 # Shortcuts' Get Contents of URL waits about 60 s, so 45 s leaves headroom and lets
 # most tasks (popups, opening apps, summaries) finish in a single request.
 WAIT_SECONDS = float(os.getenv("COMMAND_WAIT_SECONDS", "45"))
+# /talk answers sooner ("Still working...") so Siri doesn't give up and close the Shortcut.
+TALK_WAIT_SECONDS = float(os.getenv("TALK_WAIT_SECONDS", "8"))
 PORT = 8000
 HEALTH_DEVICE_TIMEOUT = 1.5  # /health never waits longer than this for the emulator
 
@@ -312,7 +314,7 @@ def _start(text: str, device: str | None, request: Request, conversation: bool) 
         _current = task
         _last_device = task.device_name
     task.start()
-    task.wait_until_settled(WAIT_SECONDS)
+    task.wait_until_settled(TALK_WAIT_SECONDS if conversation else WAIT_SECONDS)
     return _respond(task, request, conversation)
 
 
@@ -320,12 +322,21 @@ def _start(text: str, device: str | None, request: Request, conversation: bool) 
 def talk(body: TalkIn, request: Request) -> dict:
     """The one endpoint a conversation loop needs (see shortcut/README.md)."""
     task = _tasks.get(body.session_id) if body.session_id else None
+    # Siri closed the Shortcut while Relay was asking "Should I send it?". On the next
+    # run, a plain yes/no answers that question instead of starting something new.
+    if task is None and _current is not None and _current.status == "waiting" \
+            and (safety.is_yes(body.text) or safety.is_no(body.text)):
+        task = _current
+    # Re-running with no words while Relay is still busy: give the latest update.
+    if task is None and not (body.text or "").strip() and _current is not None \
+            and not _current.finished:
+        task = _current
     if task is not None and task.status == "waiting":
         task.reply(body.text)                     # answer to "Should I send it?"
-        task.wait_until_settled(WAIT_SECONDS)
+        task.wait_until_settled(TALK_WAIT_SECONDS)
         return _respond(task, request, body.conversation)
     if task is not None and not task.finished:
-        task.wait_until_settled(WAIT_SECONDS)     # still working: next update
+        task.wait_until_settled(TALK_WAIT_SECONDS)  # still working: next update
         return _respond(task, request, body.conversation)
     if not (body.text or "").strip() and not body.session_id:
         # Started, but dictation caught nothing: say so and listen again.

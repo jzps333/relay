@@ -51,3 +51,18 @@ def test_repeat_skips_the_question(client):
 def test_nothing_heard_at_start_asks_again(client):
     r = client.post("/talk", json={"text": ""}, headers=AUTH).json()
     assert r["next"] == "more" and "didn't catch" in r["say"]
+
+
+def test_new_run_answers_pending_question(client):
+    """Siri closed the Shortcut mid-question: a fresh run saying 'yes' answers it."""
+    q = client.post("/talk", json={"text": "confirm send"}, headers=AUTH).json()
+    assert q["next"] == "reply"
+    r = client.post("/talk", json={"text": "yes send it"}, headers=AUTH).json()  # no session_id
+    assert FakeTask.instances[-1].replies == ["yes send it"]
+    assert r["next"] == "more"
+
+
+def test_new_run_with_silence_reports_busy_task(client):
+    client.post("/talk", json={"text": "slow task"}, headers=AUTH)
+    r = client.post("/talk", json={"text": ""}, headers=AUTH).json()
+    assert r["next"] == "wait"
