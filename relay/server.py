@@ -139,6 +139,20 @@ def require_dashboard_access(request: Request, token: str = Query(default=""),
 class CommandIn(BaseModel):
     text: str
     device: str | None = None   # "phone" | "mac" | null (null = let the router guess)
+    conversation: bool = False  # true: end finished answers with "Anything else?"
+
+
+class TalkIn(BaseModel):
+    """One turn of a conversation. The Shortcut just keeps POSTing to /talk.
+
+    - Relay asked a question -> `text` is the answer.
+    - Relay is still working -> send empty text to hear the next update.
+    - Otherwise -> `text` is a new request (or "no" / "that's all" to finish).
+    """
+    text: str = ""
+    session_id: str = ""
+    device: str | None = None
+    conversation: bool = True
 
 
 class ReplyIn(BaseModel):
@@ -162,7 +176,28 @@ def plain_text(text: str | None) -> str:
     return t or "Done."
 
 
-def _respond(task, request: Request) -> dict:
+# Things people say to end a conversation after "Anything else?".
+_ENDINGS = {"no", "nope", "nah", "no thanks", "no thank you", "thats all", "that's all",
+            "thats it", "that's it", "im good", "i'm good", "im done", "i'm done", "nothing",
+            "nothing else", "all done", "done", "bye", "goodbye", "stop", "cancel", "never mind",
+            "nevermind", "no that's all", "no thats all", "no i'm good", "no im good", "thanks",
+            "thank you", "no that's it"}
+
+
+def is_ending(text: str) -> bool:
+    t = re.sub(r"[^a-z' ]", "", (text or "").lower()).strip()
+    return t == "" or t in _ENDINGS
+
+
+def _say_only(say: str, request: Request) -> dict:
+    """A reply that isn't tied to a task (e.g. "Okay, talk soon.")."""
+    say = plain_text(say)
+    audio_id = voice.speak(say)
+    audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else None
+    return {"say": say, "audio_url": audio_url, "needs_reply": False, "next": "done", "session_id": ""}
+
+
+def _respond(task, request: Request, conversation: bool = False) -> dict:
     """Turn a task's current state into the JSON the Shortcut expects.
 
     "say" is always plain text. "audio_url" is a full URL like
@@ -170,6 +205,10 @@ def _respond(task, request: Request) -> dict:
     phone used to reach us) or None when there's no ElevenLabs audio.
     """
     say = plain_text(task.say())
+    ask_more = conversation and task.finished
+    if ask_more:
+        _remember_answer(say)  # "repeat that" repeats the answer, not the question
+        say = f"{say} Anything else?"
     audio_id = voice.speak(say)
     audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else None
     if task.status == "waiting":
@@ -177,8 +216,10 @@ def _respond(task, request: Request) -> dict:
     elif not task.finished:
         next_step = "wait"    # still working: POST /reply with empty text to hear the next update
     else:
-        next_step = "done"    # finished: stop the Shortcut
-        _remember_answer(say)
+        # finished: "more" = listen for another request; "done" = stop the Shortcut
+        next_step = "more" if ask_more else "done"
+        if not ask_more:
+            _remember_answer(say)
         events.publish("answer", say=say, task_id=task.id)  # live dashboard
     return {
         "say": say,
@@ -250,24 +291,46 @@ def health() -> dict:
 
 @app.post("/command", dependencies=[Depends(require_token)])
 def command(body: CommandIn, request: Request) -> dict:
+    return _start(body.text, body.device, request, body.conversation)
+
+
+def _start(text: str, device: str | None, request: Request, conversation: bool) -> dict:
+    """Start a new task for `text` and answer once it finishes, pauses, or WAIT_SECONDS pass."""
     global _current, _last_device
-    if body.device not in (None, "phone", "mac"):
+    if device not in (None, "phone", "mac"):
         raise HTTPException(status_code=400, detail="device must be phone, mac or null")
     # Live dashboard: show what the user said (with the unlock passphrase removed).
-    events.publish("heard", text=agent.strip_passphrase(body.text)[0], device=body.device)
+    events.publish("heard", text=agent.strip_passphrase(text)[0], device=device)
     # "Repeat that" never starts a task, and never stops the one that's running.
-    if is_repeat(body.text):
+    if is_repeat(text):
         return _repeat_response(request)
     with _lock:
         if _current is not None and not _current.finished:
             _current.stop()  # a new command replaces the old one
-        task = agent.Task(body.text, device_name=body.device, last_device=_last_device)
+        task = agent.Task(text, device_name=device, last_device=_last_device)
         _tasks[task.id] = task
         _current = task
         _last_device = task.device_name
     task.start()
     task.wait_until_settled(WAIT_SECONDS)
-    return _respond(task, request)
+    return _respond(task, request, conversation)
+
+
+@app.post("/talk", dependencies=[Depends(require_token)])
+def talk(body: TalkIn, request: Request) -> dict:
+    """The one endpoint a conversation loop needs (see shortcut/README.md)."""
+    task = _tasks.get(body.session_id) if body.session_id else None
+    if task is not None and task.status == "waiting":
+        task.reply(body.text)                     # answer to "Should I send it?"
+        task.wait_until_settled(WAIT_SECONDS)
+        return _respond(task, request, body.conversation)
+    if task is not None and not task.finished:
+        task.wait_until_settled(WAIT_SECONDS)     # still working: next update
+        return _respond(task, request, body.conversation)
+    if is_ending(body.text):
+        events.publish("heard", text=body.text, device=body.device)
+        return _say_only("Okay, talk soon.", request)
+    return _start(body.text, body.device, request, body.conversation)
 
 
 @app.post("/reply", dependencies=[Depends(require_token)])

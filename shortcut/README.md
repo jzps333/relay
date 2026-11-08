@@ -217,3 +217,17 @@ most lock-screen-friendly) or unlock with Face ID when asked.
 | Silence, or ElevenLabs audio won't play | Delete `ELEVENLABS_API_KEY` from `.env` and restart: `audio_url` becomes empty and Speak Text is used. |
 | `emulator_connected: false` | Start the emulator (Android Studio -> Device Manager -> play) and check `adb devices` lists it. |
 | Using the Wi-Fi address and it times out | Phone and Mac must be on the same Wi-Fi, and macOS must allow Python incoming connections (System Settings -> Network -> Firewall -> Options). Easier: use `--tunnel`. |
+
+## Conversation mode (Watch): "Anything else?"
+
+Use `POST /talk` instead of `/command`. Body: `{"text": ..., "session_id": ..., "conversation": true}`.
+The reply's `next` tells the Shortcut what to do:
+
+| next  | meaning                                  | Shortcut does            |
+|-------|------------------------------------------|--------------------------|
+| reply | Relay asked a question ("Send it?")      | Dictate → POST /talk     |
+| more  | Done, Rachel asked "Anything else?"      | Dictate → POST /talk     |
+| wait  | Still working                            | POST /talk with text ""  |
+| done  | Finished ("Okay, talk soon.")            | Stop                     |
+
+Saying "no", "that's all", "I'm good", or nothing ends the conversation.
