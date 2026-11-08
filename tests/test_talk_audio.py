@@ -29,7 +29,7 @@ def test_multipart_upload_starts_task(client, heard):
     assert r["next"] == "more"
     assert r["heard"] == "open maps"
     assert heard["calls"] == [(len(AUDIO), "rec.m4a")]
-    assert FakeTask.instances[-1].text == "open maps"
+    assert FakeTask.instances[-1].original_text == "open maps"
 
 
 def test_raw_body_answers_pending_question(client, heard):

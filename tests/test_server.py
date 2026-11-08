@@ -14,7 +14,7 @@ class FakeTask:
 
     def __init__(self, text, device_name=None, last_device=None):
         self.id = f"t{len(FakeTask.instances)}"
-        self.text = text
+        self.original_text = text  # same attribute name as the real agent.Task
         self.device_name = device_name or "phone"
         self.status = "new"
         self.replies = []
@@ -26,9 +26,9 @@ class FakeTask:
         return self.status in ("done", "cancelled", "error")
 
     def start(self):
-        if self.text.startswith("confirm"):
+        if self.original_text.startswith("confirm"):
             self.status = "waiting"
-        elif self.text.startswith("slow"):
+        elif self.original_text.startswith("slow"):
             self.status = "running"   # still going when the server stops waiting
         else:
             self.status = "done"
@@ -50,7 +50,7 @@ class FakeTask:
             return "Are you sure?"
         if self.status == "cancelled":
             return "Okay, I stopped."
-        return f"Did: {self.text}"
+        return f"Did: {self.original_text}"
 
 
 @pytest.fixture

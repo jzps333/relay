@@ -204,6 +204,11 @@ _ENDINGS = {"no", "nope", "nah", "no thanks", "no thank you", "thats all", "that
 _delivered: set[str] = set()  # ids of finished tasks whose result was already spoken
 
 
+def _task_text(task) -> str:
+    """What the user asked for. Real Tasks keep it as original_text (goal gets rewritten)."""
+    return getattr(task, "original_text", None) or getattr(task, "text", "") or ""
+
+
 def _norm(text: str | None) -> str:
     return " ".join(re.sub(r"[^a-z0-9 ]", " ", (text or "").lower()).split())
 
@@ -302,7 +307,7 @@ def _is_new_request(text: str, task) -> bool:
     ("no", "thanks") are just check-ins: keep the task going and give its next update.
     """
     t = _norm(text)
-    if not t or t == _norm(task.text) or is_repeat(text) or is_ending(text) or t in _ACKS:
+    if not t or t == _norm(_task_text(task)) or is_repeat(text) or is_ending(text) or t in _ACKS:
         return False
     if len(t.split()) <= 3 and (safety.is_yes(text) or safety.is_no(text)):
         return False  # e.g. a stale "yes" re-sent by the Shortcut
@@ -474,7 +479,7 @@ def talk(body: TalkIn, request: Request) -> dict:
     # The Shortcut re-sent the SAME request (its Session/Answer variables didn't update).
     # Don't restart the task, which would loop "Working on it" forever: treat it as a check-in.
     same_as_current = (_current is not None and not _current.finished
-                       and _norm(body.text) and _norm(body.text) == _norm(_current.text))
+                       and _norm(body.text) and _norm(body.text) == _norm(_task_text(_current)))
     if task is None and same_as_current:
         task = _current
     # The task finished between two check-ins: speak its result before anything else,
@@ -486,7 +491,7 @@ def talk(body: TalkIn, request: Request) -> dict:
     if task is not None and task.finished and task.id not in _delivered:
         return _respond(task, request, body.conversation)
     if task is not None and task.status == "waiting":
-        if not (body.text or "").strip() or _norm(body.text) == _norm(task.text) \
+        if not (body.text or "").strip() or _norm(body.text) == _norm(_task_text(task)) \
                 or is_repeat(body.text):
             # Dictation caught nothing (or the old request was re-sent): ask the question again rather than answering
             # it with "" (which would cancel). agent._ask's REPLY_TIMEOUT still applies.
