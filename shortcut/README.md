@@ -231,3 +231,23 @@ The reply's `next` tells the Shortcut what to do:
 | done  | Finished ("Okay, talk soon.")            | Stop                     |
 
 Saying "no", "that's all", "I'm good", or nothing ends the conversation.
+
+## Watch: record instead of dictate
+
+On the Apple Watch, "Dictate Text" can open a text box with no microphone, so Relay never
+hears you. Instead, record the audio and let the server transcribe it (ElevenLabs Scribe,
+falling back to Gemini). Use `POST /talk/audio` in place of `POST /talk`:
+
+1. **Record Audio**: Audio Quality Normal, Start Recording **Immediately**, Finish Recording **On Tap**.
+2. **Get Contents of URL**: `https://149-28-41-199.sslip.io/talk/audio?session_id=<Session>&conversation=true`
+   - Method **POST**
+   - Headers: `Authorization` = `Bearer <token>`
+   - Request Body **File**: File = **Recorded Audio**
+   - (`<Session>` is the `session_id` from the previous reply; leave it empty on the first turn.)
+3. Handle the reply exactly like `/talk`: speak `say` (or play `audio_url`), save `session_id`,
+   then branch on `next` (`reply`/`more` -> loop back to step 1, `wait` -> POST `/talk/audio`
+   again with no recording or POST `/talk` with text "", `done` -> stop).
+
+The reply also has `heard`: the words the server transcribed (handy for debugging; show it
+with Show Result). A recording under about 1 KB counts as silence ("Sorry, I didn't catch that").
+Multipart form uploads also work: field `file`, plus optional `session_id`, `conversation`, `device`.
