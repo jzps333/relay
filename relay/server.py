@@ -12,6 +12,7 @@ GET  /audio/{id}.mp3                 -> ElevenLabs audio for a reply
 GET  /dashboard                      -> live dashboard page for the projector
 GET  /events/stream                  -> live events (Server-Sent Events) for the dashboard
 GET  /events/recent                  -> the last ~100 events as JSON
+WS   /device/ws                      -> cloud mode only: the Mac's device helper (relay/remote.py)
 
 Every route except /health needs the header  Authorization: Bearer <RELAY_TOKEN>.
 The three dashboard routes also work WITHOUT a token when opened on the Mac itself
@@ -32,7 +33,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from relay import agent, config, events, router, skills, voice
+from relay import agent, config, events, remote, router, skills, voice
 
 # How long one HTTP request waits for the task before answering "still working".
 # Shortcuts' Get Contents of URL waits about 60 s, so 45 s leaves headroom and lets
@@ -42,6 +43,7 @@ PORT = 8000
 HEALTH_DEVICE_TIMEOUT = 1.5  # /health never waits longer than this for the emulator
 
 app = FastAPI(title="Relay")
+remote.register(app)  # /device/ws: the Mac's device helper connects here in cloud mode
 
 # --- state shared between requests -----------------------------------------
 _lock = threading.Lock()
@@ -236,11 +238,14 @@ def emulator_connected(timeout: float = HEALTH_DEVICE_TIMEOUT) -> bool:
 @app.get("/health")
 def health() -> dict:
     """No token needed: open http://<mac-ip>:8000/health in Safari to test the connection."""
-    return {
+    body = {
         "ok": True,
         "device_default": config.DEFAULT_DEVICE,
         "emulator_connected": emulator_connected(),
     }
+    if config.CLOUD_MODE:  # cloud mode: is the Mac's device helper connected?
+        body["device_helper_connected"] = remote.hub.connected
+    return body
 
 
 @app.post("/command", dependencies=[Depends(require_token)])

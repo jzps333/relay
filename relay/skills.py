@@ -357,8 +357,12 @@ def run(name: str, params: dict, device) -> str:
         if hasattr(device, "grant_location"):
             device.grant_location("com.google.android.apps.maps")
             # Put the emulator where the Mac really is (otherwise it's in California).
-            from relay import location
-            if location.sync_emulator_to_mac():
+            if hasattr(device, "sync_location"):
+                synced = device.sync_location()  # cloud mode: the Mac's helper does it
+            else:
+                from relay import location
+                synced = location.sync_emulator_to_mac()
+            if synced:
                 time.sleep(1.0)  # give the emulator's GPS a moment to report the new spot
         # Quit Maps first: if an old route is still running, a new request just
         # gets ignored and you keep the old directions.

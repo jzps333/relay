@@ -1,0 +1,24 @@
+# systemd unit: keeps the Relay brain running on the Vultr server (cloud mode).
+# Install:  sudo cp deploy/relay.service /etc/systemd/system/relay.service
+#           sudo systemctl daemon-reload && sudo systemctl enable --now relay
+# Logs:     journalctl -u relay -f
+[Unit]
+Description=Relay voice agent server (cloud mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=relay
+WorkingDirectory=/opt/relay
+# .env in /opt/relay is also read by the app itself (python-dotenv);
+# this line makes sure CLOUD_MODE etc. are set even before Python starts.
+EnvironmentFile=/opt/relay/.env
+# Listen only on localhost: Caddy (HTTPS) is the only way in from the internet.
+# --proxy-headers lets Relay see the real https:// address Caddy received,
+# so audio links in replies point at https://<your-host>/audio/...
+ExecStart=/opt/relay/.venv/bin/python -m uvicorn relay.server:app --host 127.0.0.1 --port 8000 --proxy-headers
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

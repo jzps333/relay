@@ -186,6 +186,9 @@ Then build the iPhone Shortcut: **[shortcut/README.md](shortcut/README.md)**.
 | `COMMAND_WAIT_SECONDS` | `45` | How long one request waits before answering "still working" |
 | `SCREENSHOT_WIDTH` | `540` | Screenshots are shrunk to this width before going to the AI |
 | `SYNC_MAC_LOCATION` | `true` | Copy the Mac's location to the emulator before directions |
+| `CLOUD_MODE` | off | `1` = run the brain on a cloud server; the Mac runs `python -m relay.device_helper` ([deploy/VULTR.md](deploy/VULTR.md)) |
+| `RELAY_SERVER` | | Mac side of cloud mode: the server the helper connects to, e.g. `https://1-2-3-4.sslip.io` |
+| `REMOTE_TIMEOUT` | `30` | Cloud mode: seconds to wait for the Mac's helper to answer one device call |
 
 ## Testing
 

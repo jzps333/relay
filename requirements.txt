@@ -3,6 +3,7 @@ fastapi
 uvicorn
 httpx
 python-dotenv
+websockets>=14                            # cloud mode: Mac device helper (relay/device_helper.py)
 
 # Brains
 anthropic
