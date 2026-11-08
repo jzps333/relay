@@ -11,6 +11,7 @@ What lives here:
 """
 from __future__ import annotations
 
+import os
 import re
 
 from relay.types import Action, Element, Screen
@@ -188,6 +189,9 @@ def is_sensitive_field(element: Element | None) -> bool:
     return element is not None and _has(_SENSITIVE_FIELD, element.text)
 
 
+_MONEY_TAP = r"\b(pay|payment|buy|purchase|order|checkout|check out|place order|subscribe|donate|transfer|tip)\b"
+
+
 def needs_confirmation(action: Action, screen: Screen) -> str | None:
     """Check an action BEFORE the device runs it.
 
@@ -212,6 +216,10 @@ def needs_confirmation(action: Action, screen: Screen) -> str | None:
         return None
     if action.kind == "tap" and element is not None and _has(_RISKY_TAP, element.text):
         label = element.text.strip()
+        # AUTO_CONFIRM=1: the user pre-approved sends/follows/connects, so just do them.
+        # Money is still always asked about (pay, buy, order, checkout...).
+        if os.getenv("AUTO_CONFIRM", "0") == "1" and not _has(_MONEY_TAP, element.text):
+            return None
         return f"About to tap {label} in {app}. Should I do it?"
 
     return None

@@ -174,3 +174,15 @@ def test_linkedin_connect_needs_confirmation():
                            Element(1, "Send without a note", "button", (0, 0, 1, 1), True)])
     assert safety.needs_confirmation(Action(kind="tap", element_id=0), scr)
     assert safety.needs_confirmation(Action(kind="tap", element_id=1), scr)  # "send"
+
+
+def test_auto_confirm_skips_send_but_not_pay(monkeypatch):
+    from relay import safety
+    from relay.types import Action, Element, Screen
+    def scr(label):
+        return Screen(device="phone", app="com.google.android.apps.messaging", elements=[Element(id=1, text=label, kind="button", bounds=(0, 0, 10, 10), clickable=True)])
+    monkeypatch.setenv("AUTO_CONFIRM", "1")
+    assert safety.needs_confirmation(Action(kind="tap", element_id=1), scr("Send SMS")) is None
+    assert safety.needs_confirmation(Action(kind="tap", element_id=1), scr("Pay now")) is not None
+    monkeypatch.setenv("AUTO_CONFIRM", "0")
+    assert safety.needs_confirmation(Action(kind="tap", element_id=1), scr("Send SMS")) is not None
