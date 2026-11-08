@@ -10,9 +10,9 @@ Wants=network-online.target
 [Service]
 User=relay
 WorkingDirectory=/opt/relay
-# .env in /opt/relay is also read by the app itself (python-dotenv);
-# this line makes sure CLOUD_MODE etc. are set even before Python starts.
-EnvironmentFile=/opt/relay/.env
+# Settings come from /opt/relay/.env, read by the app itself (python-dotenv).
+# (No EnvironmentFile= here: systemd parses .env more strictly than dotenv, so a
+# quote or trailing comment in a key silently breaks it.)
 # Listen only on localhost: Caddy (HTTPS) is the only way in from the internet.
 # --proxy-headers lets Relay see the real https:// address Caddy received,
 # so audio links in replies point at https://<your-host>/audio/...
