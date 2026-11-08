@@ -93,6 +93,16 @@ TIPS: dict[str, str] = {
         "- Close pop-ups or cookie banners first if they cover the page.",
         NO_SIGN_IN,
     ]),
+    # LinkedIn
+    "com.linkedin.android": "\n".join([
+        "- To find a person, tap the Search bar at the top, type their full name, and pick the "
+        "People result that matches (check the headline/school/company if several match).",
+        "- On their profile, \"Connect\" may be a button or hidden under \"More\" (three dots). "
+        "Relay asks the user before tapping Connect.",
+        "- If LinkedIn offers \"Add a note\", choose \"Send without a note\" unless the user gave a note.",
+        "- \"Follow\" is not the same as \"Connect\"; prefer Connect when the user says connect.",
+        NO_SIGN_IN,
+    ]),
 }
 
 

@@ -43,6 +43,7 @@ APP_PACKAGES = {
     "calendar": "com.google.android.calendar",
     "clock": "com.google.android.deskclock",
     "play store": "com.android.vending",
+    "linkedin": "com.linkedin.android",
     "x": "com.twitter.android",
     "twitter": "com.twitter.android",
 }

@@ -164,3 +164,13 @@ def test_follow_and_block_need_confirmation():
                            Element(2, "Following", "button", (0, 0, 1, 1), True)])
     assert safety.needs_confirmation(Action(kind="tap", element_id=0), scr)
     assert safety.needs_confirmation(Action(kind="tap", element_id=1), scr)
+
+
+def test_linkedin_connect_needs_confirmation():
+    from relay import safety
+    from relay.types import Screen, Element, Action
+    scr = Screen(device="phone", app="com.linkedin.android",
+                 elements=[Element(0, "Connect", "button", (0, 0, 1, 1), True),
+                           Element(1, "Send without a note", "button", (0, 0, 1, 1), True)])
+    assert safety.needs_confirmation(Action(kind="tap", element_id=0), scr)
+    assert safety.needs_confirmation(Action(kind="tap", element_id=1), scr)  # "send"

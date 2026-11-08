@@ -146,7 +146,7 @@ def is_stop(utterance: str) -> bool:
 _RISKY_TAP = (
     r"\b(?:send|post|pay|buy|place\s+order|order\s+now|checkout|check\s+out|"
     r"confirm|delete|remove|call|transfer|submit|share|purchase|book\s+now|"
-    r"follow|unfollow|block|unblock|report|request)\b"
+    r"follow|unfollow|block|unblock|report|request|connect|invite)\b"
 )
 
 # Fields we must NEVER type into for the user.
