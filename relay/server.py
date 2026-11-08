@@ -325,6 +325,9 @@ def _start(text: str, device: str | None, request: Request, conversation: bool) 
 @app.post("/talk", dependencies=[Depends(require_token)])
 def talk(body: TalkIn, request: Request) -> dict:
     """The one endpoint a conversation loop needs (see shortcut/README.md)."""
+    # Debug line: shows exactly what the Watch/iPhone sent (journalctl -u relay -f).
+    print(f"[talk] heard={body.text!r} session={body.session_id or '-'} "
+          f"current={getattr(_current, 'status', None)}", flush=True)
     task = _tasks.get(body.session_id) if body.session_id else None
     # Siri closed the Shortcut while Relay was asking "Should I send it?". On the next
     # run, a plain yes/no answers that question instead of starting something new.
