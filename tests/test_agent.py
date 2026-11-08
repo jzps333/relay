@@ -282,3 +282,58 @@ def test_going_in_circles_stops(env, monkeypatch):
     assert t.status == "cancelled"
     assert "circles" in t.say()
     assert len(env.device.acted) == 3
+
+
+# --- live dashboard events -------------------------------------------------
+def _kinds():
+    from relay import events
+    return [e["kind"] for e in events.since(0)]
+
+
+def _events(kind):
+    from relay import events
+    return [e for e in events.since(0) if e["kind"] == kind]
+
+
+def test_agent_publishes_start_steps_and_done(env):
+    env.actions = [Action("tap", element_id=0), Action("done", text="Message sent.")]
+    t = run("text mom hi")
+    kinds = _kinds()
+    assert kinds[0] == "task_start" and kinds[-1] == "done"
+    assert "route" in kinds  # the screen agent announced itself
+    [start] = _events("task_start")
+    assert start["goal"] == "text mom hi" and start["device"] == "phone" and start["task_id"] == t.id
+    assert [e["text"] for e in _events("step")] == ["Tapping Send"]
+    [done] = _events("done")
+    assert done["message"] == "Message sent." and isinstance(done["seconds"], float)
+
+
+def test_agent_publishes_confirm_and_reply(env):
+    env.confirm = lambda a, s: "Send this message to Mom?"
+    env.actions = [Action("tap", element_id=0), Action("done", text="Sent.")]
+    t = run("text mom")
+    [ask] = _events("confirm")
+    assert ask["question"] == "Send this message to Mom?" and ask["safety"] is True
+    env.confirm = None
+    t.reply("yes")
+    t.wait_until_settled(5)
+    [reply] = _events("reply")
+    assert reply["text"] == "yes" and reply["yes"] is True
+    assert _kinds()[-1] == "done"
+
+
+def test_agent_publishes_blocked_and_cancelled(env):
+    env.confirm = lambda a, s: "BLOCKED: I won't type a card number."
+    env.actions = [Action("tap", element_id=0)]
+    run("pay")
+    [blocked] = _events("blocked")
+    assert blocked["message"] == "I won't type a card number."
+    assert _kinds()[-1] == "cancelled"
+
+
+def test_done_event_comes_before_task_finishes(env):
+    """The server's "answer" event must come after the agent's "done" event."""
+    from relay import events
+    env.actions = [Action("done", text="Ok.")]
+    t = run("do it")
+    assert t.finished and events.since(0)[-1]["kind"] == "done"

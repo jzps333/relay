@@ -9,22 +9,30 @@ POST /command {"text", "device"}  -> start a task, wait up to ~45 s, return what
 POST /reply   {"session_id","text"} -> answer a yes/no (or any) question the task asked
 POST /stop                           -> stop whatever is running
 GET  /audio/{id}.mp3                 -> ElevenLabs audio for a reply
+GET  /dashboard                      -> live dashboard page for the projector
+GET  /events/stream                  -> live events (Server-Sent Events) for the dashboard
+GET  /events/recent                  -> the last ~100 events as JSON
 
 Every route except /health needs the header  Authorization: Bearer <RELAY_TOKEN>.
+The three dashboard routes also work WITHOUT a token when opened on the Mac itself
+(http://localhost:8000/dashboard), and accept ?token=<RELAY_TOKEN> from anywhere else.
 """
 from __future__ import annotations
 
+import json
 import re
 import os
 import secrets
 import socket
 import threading
+import time
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
-from relay import agent, config, router, skills, voice
+from relay import agent, config, events, router, skills, voice
 
 # How long one HTTP request waits for the task before answering "still working".
 # Shortcuts' Get Contents of URL waits about 60 s, so 45 s leaves headroom and lets
@@ -89,6 +97,42 @@ def require_token(authorization: str = Header(default="")) -> None:
         raise HTTPException(status_code=401, detail="bad or missing token")
 
 
+# --- dashboard auth --------------------------------------------------------
+# The projector dashboard runs in a browser ON the Mac, so we let "this computer"
+# in without a token. The catch: ngrok and Cloudflare tunnels also connect from
+# 127.0.0.1, so a request from the internet LOOKS local. Tunnels always add
+# headers saying who really sent it; if any of those are there, it's remote.
+_LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+_FORWARD_HEADERS = {"x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip",
+                    "forwarded", "cf-connecting-ip", "cf-ray", "cf-ipcountry", "cdn-loop", "true-client-ip"}
+
+
+def is_forwarded(request: Request) -> bool:
+    """True if a proxy/tunnel (ngrok, Cloudflare, ...) passed this request along."""
+    for name in request.headers.keys():  # header names arrive lowercase
+        if name in _FORWARD_HEADERS or name.startswith(("ngrok-", "x-ngrok")):
+            return True
+    return False
+
+
+def is_local_request(request: Request) -> bool:
+    """True only for a browser on this Mac, talking to us directly (no tunnel)."""
+    host = request.client.host if request.client else ""
+    return host in _LOCAL_HOSTS and not is_forwarded(request)
+
+
+def require_dashboard_access(request: Request, token: str = Query(default=""),
+                             authorization: str = Header(default="")) -> None:
+    """Dashboard routes: free on this Mac, otherwise ?token=... or the Bearer header."""
+    if is_local_request(request):
+        return
+    want = config.RELAY_TOKEN.strip()
+    got = token.strip() or _clean_token(authorization)
+    if not want or not secrets.compare_digest(got.encode(), want.encode()):
+        print(f"[auth] dashboard rejected: {_why_rejected(got, want)}")
+        raise HTTPException(status_code=401, detail="bad or missing token")
+
+
 # --- request bodies --------------------------------------------------------
 class CommandIn(BaseModel):
     text: str
@@ -133,6 +177,7 @@ def _respond(task, request: Request) -> dict:
     else:
         next_step = "done"    # finished: stop the Shortcut
         _remember_answer(say)
+        events.publish("answer", say=say, task_id=task.id)  # live dashboard
     return {
         "say": say,
         "audio_url": audio_url,
@@ -150,6 +195,7 @@ def _remember_answer(say: str) -> None:
 def _repeat_response(request: Request) -> dict:
     """Speak the last final answer again (instant: no task, no AI)."""
     say = _last_answer or NOTHING_TO_REPEAT
+    events.publish("repeat", say=say)  # live dashboard
     audio_id = voice.speak(say)
     audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else None
     return {"say": say, "audio_url": audio_url, "needs_reply": False, "next": "done", "session_id": ""}
@@ -202,6 +248,8 @@ def command(body: CommandIn, request: Request) -> dict:
     global _current, _last_device
     if body.device not in (None, "phone", "mac"):
         raise HTTPException(status_code=400, detail="device must be phone, mac or null")
+    # Live dashboard: show what the user said (with the unlock passphrase removed).
+    events.publish("heard", text=agent.strip_passphrase(body.text)[0], device=body.device)
     # "Repeat that" never starts a task, and never stops the one that's running.
     if is_repeat(body.text):
         return _repeat_response(request)
@@ -246,6 +294,64 @@ def audio(audio_id: str) -> FileResponse:
     if path is None:
         raise HTTPException(status_code=404, detail="no such audio")
     return FileResponse(path, media_type="audio/mpeg")
+
+
+# --- live dashboard ----------------------------------------------------------
+DASHBOARD_FILE = os.path.join(os.path.dirname(__file__), "dashboard.html")
+KEEPALIVE_SECONDS = 15.0   # send a comment line this often so proxies don't close an idle stream
+STREAM_SECONDS = 300.0     # end each stream after 5 min; the browser reconnects by itself
+WAIT_STEP_SECONDS = 1.0    # how long one wait for new events lasts before we check again
+
+
+@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(require_dashboard_access)])
+def dashboard() -> HTMLResponse:
+    """The projector page. Open http://localhost:8000/dashboard on the Mac."""
+    with open(DASHBOARD_FILE, encoding="utf-8") as f:
+        return HTMLResponse(f.read(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/events/recent", dependencies=[Depends(require_dashboard_access)])
+def events_recent() -> dict:
+    """The last ~100 events, so a freshly opened dashboard isn't empty."""
+    return {"events": events.recent(100), "newest_id": events.newest_id(), "server_ts": time.time()}
+
+
+def _sse(event: dict) -> str:
+    """One Server-Sent Event. The browser's EventSource remembers `id` and sends it
+    back as the Last-Event-ID header when it reconnects."""
+    return f"id: {event['id']}\ndata: {json.dumps(event)}\n\n"
+
+
+@app.get("/events/stream", dependencies=[Depends(require_dashboard_access)])
+async def events_stream(request: Request, since: int | None = None,
+                        last_event_id: str = Header(default="")) -> StreamingResponse:
+    """Live events as text/event-stream. Resume with ?since=<id> or the Last-Event-ID header."""
+    start = since
+    if start is None:
+        start = int(last_event_id) if last_event_id.strip().isdigit() else events.newest_id()
+
+    async def stream():
+        last = start
+        # Tell the page how far the server's ids go. If the page remembers a
+        # BIGGER id, the server restarted and the page should start over.
+        yield "retry: 2000\n" + f"event: hello\ndata: {json.dumps({'newest_id': events.newest_id(), 'server_ts': time.time()})}\n\n"
+        opened = last_sent = time.monotonic()
+        while time.monotonic() - opened < STREAM_SECONDS:
+            if await request.is_disconnected():
+                break
+            # wait_for_new blocks a thread, so it runs in the thread pool, not here.
+            new = await run_in_threadpool(events.wait_for_new, last, WAIT_STEP_SECONDS)
+            for event in new:
+                last = event["id"]
+                yield _sse(event)
+            if new:
+                last_sent = time.monotonic()
+            elif time.monotonic() - last_sent >= KEEPALIVE_SECONDS:
+                yield ": keepalive\n\n"  # lines starting with ":" are comments; browsers ignore them
+                last_sent = time.monotonic()
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # --- launcher: python -m relay.server ---------------------------------------
@@ -294,6 +400,8 @@ def startup_banner(ips: list[str], token: str, port: int = PORT) -> str:
     else:
         lines.append("Couldn't find a LAN IP. Is the Mac on Wi-Fi?")
         lines.append("Find it in System Settings -> Wi-Fi -> Details -> IP address.")
+    lines.append("Live dashboard (open on this Mac, e.g. for the projector):")
+    lines.append(f"    http://localhost:{port}/dashboard")
     lines.append(f"Token: RELAY_TOKEN from .env (starts with {token_hint(token)})")
     lines.append(f"    Shortcut header:  Authorization: Bearer {token_hint(token)}")
     if token_is_weak(token):

@@ -241,3 +241,35 @@ def test_goal_complete_only_with_done():
     from relay.brains.claude import parse_action
     assert parse_action({"kind": "done", "text": "Sent.", "goal_complete": True}).goal_complete
     assert not parse_action({"kind": "tap", "element_id": 1, "goal_complete": True}).goal_complete
+
+
+# ---------- Picker -> live dashboard events ----------
+
+def brain_events():
+    from relay import events
+    return [e for e in events.since(0) if e["kind"] == "brain"]
+
+
+def test_picker_publishes_jev_brain_event(brains):
+    brains["jev"] = Action(kind="tap", element_id=1, confidence=0.9, source="jev")
+    choose()
+    [e] = brain_events()
+    assert e["brain"] == "jev" and e["action"] == "tap" and e["label"] == "Mom"
+    assert e["conf"] == 0.9 and isinstance(e["ms"], int)
+    assert "fallback_reason" not in e  # Jev was used, nothing to explain
+
+
+def test_picker_publishes_claude_with_fallback_reason(brains):
+    brains["jev"] = Action(kind="tap", element_id=0, confidence=0.5, source="jev")
+    choose()
+    [e] = brain_events()
+    assert e["brain"] == "claude" and e["label"] == "Mom"
+    assert "confidence" in e["fallback_reason"]
+
+
+def test_picker_jev_error_reason_hides_error_text(brains):
+    brains["jev"] = jev.JevError("HTTP 401: key sk-secret rejected")
+    choose()
+    [e] = brain_events()
+    assert e["brain"] == "claude" and e["fallback_reason"] == "Jev unavailable"
+    assert "sk-secret" not in str(e)

@@ -20,7 +20,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
-from relay import config, context, router
+from relay import config, context, events, router
 from relay.types import Action, Screen
 
 if TYPE_CHECKING:  # only for type hints; the real import happens lazily in _work()
@@ -112,9 +112,12 @@ class Task:
         self._reply_ready = threading.Event()
         self._reply_text = ""
         self._thread: threading.Thread | None = None
+        self._started_at = time.monotonic()  # for "done in 8.2 s" on the dashboard
 
     # ------------------------------------------------------------------ server API
     def start(self) -> "Task":
+        self._started_at = time.monotonic()
+        self._emit("task_start", goal=self.goal, device=self.device_name)
         self._set(status="running")
         self._thread = threading.Thread(target=self._run, daemon=True, name=f"task-{self.id}")
         self._thread.start()
@@ -159,6 +162,10 @@ class Task:
         return "Working on it."
 
     # ------------------------------------------------------------------ helpers
+    def _emit(self, kind: str, **data) -> None:
+        """Send an event to the live dashboard, tagged with this task's id (never raises)."""
+        events.publish(kind, task_id=self.id, **data)
+
     def _set(self, **fields) -> None:
         with self._cv:
             for k, v in fields.items():
@@ -169,21 +176,28 @@ class Task:
         with self._cv:
             self.narration.append(line)
             self._cv.notify_all()
+        self._emit("step", text=line)
 
     def _check_stop(self) -> None:
         if self._stop.is_set():
             raise Cancelled("Okay, I stopped.")
 
-    def _ask(self, question: str) -> str:
-        """Pause, speak `question`, and wait for /reply. Timeout or stop -> Cancelled."""
+    def _ask(self, question: str, safety_check: bool = False) -> str:
+        """Pause, speak `question`, and wait for /reply. Timeout or stop -> Cancelled.
+
+        safety_check=True means this is a "should I really tap Send?" question
+        (the dashboard shows those in amber).
+        """
         self._reply_ready.clear()
         self._check_stop()  # stop() may have fired just before we cleared the event
+        self._emit("confirm", question=question, safety=safety_check)
         self._set(status="waiting", question=question)
         got = self._reply_ready.wait(REPLY_TIMEOUT)
         self._set(status="running", question=None)
         self._check_stop()
         if not got:
             raise Cancelled("I didn't hear back, so I cancelled.")
+        self._emit("reply", text=self._reply_text, yes=_is_yes(self._reply_text))
         from relay import safety
         if safety.is_stop(self._reply_text):
             raise Cancelled("Okay, I stopped.")
@@ -192,19 +206,23 @@ class Task:
     # ------------------------------------------------------------------ the loop
     def _run(self) -> None:
         try:
-            result = self._work()
-            self._set(status="done", result=result)
+            status, result = "done", self._work()
         except Cancelled as c:
-            self._set(status="cancelled", result=str(c))
+            status, result = "cancelled", str(c)
         except Exception as e:  # never let a crash leave the user hanging in silence
             print(f"[agent] task {self.id} crashed: {e!r}")
-            self._set(status="error", result="Sorry, something went wrong and I had to stop.")
+            status, result = "error", "Sorry, something went wrong and I had to stop."
+        # Dashboard first ("done"/"cancelled"/"error" + how long it took), THEN wake the
+        # server, so the dashboard sees "done" before the server's spoken "answer".
+        self._emit(status, message=result, seconds=round(time.monotonic() - self._started_at, 1))
+        self._set(status=status, result=result)
 
     def _work(self) -> str:
         from relay import safety, routines  # lazy: other agents write these modules
 
         # 1. Emergency first: no AI, no planning, no confirmation.
         if safety.is_emergency(self.original_text):
+            self._emit("route", how="emergency", name="call 911")
             phone = router.get_device("phone")  # emergency calls always go through the phone
             phone.emergency_call()
             return "Calling 911 now."
@@ -220,12 +238,14 @@ class Task:
 
         # 3. Fast path: just describe the screen.
         if _DESCRIBE.search(self.goal):
+            self._emit("route", how="describe", name="describe the screen")
             return self._describe(device)
 
         # 4a. Workflows: one saying runs several steps ("morning outlook").
         from relay import skills, workflows
         flow = workflows.match(self.goal)
         if flow is not None:
+            self._emit("route", how="workflow", name=flow.name)
             return self._run_workflow(device, safety, skills, flow)
 
         # 4b. Skills: instant shortcuts (Maps, music, open/close apps, volume).
@@ -272,6 +292,7 @@ class Task:
         routine: Routine | None = routines.find(self.goal)
         resumed = False
         if routine is not None:
+            self._emit("route", how="routine", name=self.goal)
             self._narrate("Running your saved routine")
             if routines.replay(routine, device):
                 return "Done. I used your saved routine."
@@ -365,8 +386,9 @@ class Task:
         if config.RELAY_PASSPHRASE and not self.passphrase_said:
             raise Cancelled("Your phone is locked. Say your passphrase, then what you want.")
         self._narrate("Unlocking")
-        if not device.unlock(config.EMULATOR_PIN):
+        if not device.unlock(config.EMULATOR_PIN):  # the PIN itself never goes to the dashboard
             raise Cancelled("I couldn't unlock the phone. Check the PIN in your settings file.")
+        self._emit("unlock")
 
     def _describe(self, device) -> str:
         from relay.brains import gemini, claude
@@ -384,6 +406,7 @@ class Task:
         # in front of the goal so "reply to the second one" makes sense to the brains.
         goal = context.add_to_goal(self.goal)  # grows with the user's answers to ask_user questions
         used_context = goal != self.goal
+        self._emit("route", how="screen_agent", name="resumed" if resumed else "")
 
         if resumed:
             # A routine already did part of the job; a fresh plan would redo those
@@ -424,7 +447,11 @@ class Task:
                 # LAST step, Claude double-checks the screen and writes the summary.
                 if action.kind == "done" and action.source == "jev" and subgoal == subgoals[-1]:
                     from relay.brains import claude
+                    started = time.perf_counter()
                     action = claude.pick_action(goal, subgoal, screen, history)
+                    self._emit("brain", brain="claude", action=action.kind, conf=action.confidence,
+                               ms=int((time.perf_counter() - started) * 1000),
+                               fallback_reason="double-checking the last step")
 
                 if action.kind == "done":
                     final = action.text or final
@@ -442,15 +469,18 @@ class Task:
 
                 # Rule 4: Relay never types secrets, whatever the brain says.
                 if action.kind == "type" and self._is_secret_field(action, screen):
+                    self._emit("blocked", message="Won't type a password or card number")
                     raise Cancelled("This needs a password or card number. For your safety I won't type "
                                     "those. Please enter it yourself, then ask me to continue.")
 
                 question = safety.needs_confirmation(action, screen)
                 if question and question.startswith(blocked):
                     # A refusal, not a question: stop and say why. Never ask the user.
-                    raise Cancelled(question[len(blocked):].strip() or "I can't do that safely.")
+                    reason = question[len(blocked):].strip() or "I can't do that safely."
+                    self._emit("blocked", message=reason)
+                    raise Cancelled(reason)
                 if question:
-                    if not _is_yes(self._ask(question)):
+                    if not _is_yes(self._ask(question, safety_check=True)):
                         raise Cancelled("Okay, I won't do that.")
 
                 # Remember WHICH element was used (ids change every screen), so the

@@ -20,7 +20,7 @@ import re
 import time
 from urllib.parse import quote
 
-from relay import config
+from relay import config, events
 
 log = logging.getLogger("relay.skills")
 
@@ -302,6 +302,7 @@ def match_keywords(goal: str) -> tuple[str, dict] | None:
 
     if result is not None:
         log.info("keyword match %s %s", result[0], result[1])
+        events.publish("route", how="keyword", name=result[0])  # live dashboard
     return result
 
 
@@ -339,7 +340,9 @@ def route(goal: str, device_name: str) -> tuple[str, dict] | None:
         if getattr(block, "type", None) == "tool_use":
             log.info("router picked %s %s ms=%d", block.name, dict(block.input), ms)
             if block.name in SKILL_NAMES:
+                events.publish("route", how="skill", name=block.name, ms=ms)  # live dashboard
                 return block.name, dict(block.input)
+            # screen_agent: the agent announces that itself when the step loop starts.
             return None
     return None
 

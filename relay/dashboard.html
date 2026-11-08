@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relay Live</title>
+<!-- Atkinson Hyperlegible: a typeface designed for low-vision readers. Falls back to system fonts offline. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* ---- Colors and sizes in one place. Tuned for a projector in a dark room. ---- */
+  :root {
+    --bg: #07090d;
+    --surface: #11151c;
+    --surface-2: #181d27;
+    --line: #262d3a;
+    --text: #f4f6fa;
+    --muted: #a4adbd;          /* still readable from the back of the room */
+    --jev: #3be8b0;            /* Jev: fast, green-cyan */
+    --claude: #b9a3ff;         /* Claude: violet */
+    --working: #5cb0ff;
+    --amber: #ffc53d;          /* safety questions */
+    --red: #ff6363;            /* blocked / errors */
+    --green: #5be37d;          /* done / yes */
+    --radius: 18px;
+    --font: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 400 22px/1.35 var(--font);
+    -webkit-font-smoothing: antialiased;
+    font-variant-numeric: tabular-nums;
+  }
+  .app {
+    min-height: 100%;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 20px;
+    padding: 24px 32px 28px;
+  }
+
+  /* ---- Header: name, live status, device ---- */
+  header { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+  .brand { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+  .status {
+    display: inline-flex; align-items: center; gap: 14px;
+    padding: 10px 22px; border-radius: 999px;
+    background: var(--surface); border: 2px solid var(--line);
+    font-size: 26px; font-weight: 700;
+  }
+  .dot { width: 20px; height: 20px; border-radius: 50%; background: var(--muted); flex: none; }
+  .status[data-state="working"] .dot { background: var(--working); animation: pulse 1.1s ease-in-out infinite; }
+  .status[data-state="waiting"] { border-color: var(--amber); color: var(--amber); }
+  .status[data-state="waiting"] .dot { background: var(--amber); animation: pulse 0.8s ease-in-out infinite; }
+  .status[data-state="done"] .dot { background: var(--green); }
+  .status[data-state="listening"] .dot { background: var(--jev); }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.75); } }
+  .badge {
+    padding: 10px 20px; border-radius: 12px; font-size: 24px; font-weight: 700;
+    background: var(--surface-2); border: 2px solid var(--line);
+  }
+  .conn { margin-left: auto; font-size: 20px; color: var(--muted); }
+  .conn[data-ok="false"] { color: var(--red); }
+
+  /* ---- Main grid: story on the left, answer + stats + history on the right ---- */
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    gap: 24px;
+    min-height: 0;
+  }
+  .col { display: flex; flex-direction: column; gap: 20px; min-height: 0; }
+  .card {
+    background: var(--surface); border: 2px solid var(--line);
+    border-radius: var(--radius); padding: 22px 26px;
+  }
+  .label {
+    font-size: 20px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin: 0 0 8px;
+  }
+  .heard { font-size: clamp(40px, 4.2vw, 64px); font-weight: 700; line-height: 1.12; margin: 0; overflow-wrap: anywhere; }
+  .heard.empty { color: var(--muted); font-weight: 400; }
+
+  /* ---- Timeline of the current task ---- */
+  .timeline-card { flex: 1; display: flex; flex-direction: column; min-height: 260px; }
+  .timeline { list-style: none; margin: 0; padding: 0 4px 0 0; overflow-y: auto; flex: 1; max-height: 52vh; }
+  .row {
+    display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center;
+    gap: 14px; padding: 12px 6px; border-bottom: 1px solid var(--line);
+    font-size: 24px; animation: rise .25s ease-out;
+  }
+  .row:last-child { border-bottom: 0; }
+  .row.no-anim { animation: none; }   /* rows replayed on first load appear instantly */
+  .row .icon { font-size: 28px; text-align: center; }
+  .row .text { overflow-wrap: anywhere; }
+  .row .sub { display: block; font-size: 20px; color: var(--muted); margin-top: 2px; }
+  .row .when { font-size: 20px; color: var(--muted); }
+  .row.route .text { color: var(--jev); font-weight: 700; }
+  .row.route.slow .text { color: var(--working); }
+  .row.confirm {
+    background: rgba(255, 197, 61, .12); border: 2px solid var(--amber);
+    border-radius: 14px; margin: 6px 0;
+  }
+  .row.confirm .text { color: var(--amber); font-weight: 700; }
+  .row.confirm .sub { color: var(--text); font-size: 24px; }
+  .row.blocked { background: rgba(255, 99, 99, .14); border: 2px solid var(--red); border-radius: 14px; margin: 6px 0; }
+  .row.blocked .text { color: var(--red); font-weight: 700; }
+  .row.yes .text { color: var(--green); font-weight: 700; }
+  .row.no .text { color: var(--red); font-weight: 700; }
+  .row.end .text { font-weight: 700; }
+  .row.end.ok .text { color: var(--green); }
+  .row.end.bad .text { color: var(--red); }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* Brain pills: Jev (fast) vs Claude */
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+    padding: 4px 14px; border-radius: 999px; font-size: 20px; font-weight: 700;
+    border: 2px solid currentColor;
+  }
+  .pill.jev { color: var(--jev); background: rgba(59, 232, 176, .10); }
+  .pill.claude { color: var(--claude); background: rgba(185, 163, 255, .10); }
+  .pill .conf { font-weight: 400; opacity: .85; }
+
+  /* ---- Right column ---- */
+  .answer { border-color: var(--green); }
+  #answer { margin: 0; font-size: 30px; line-height: 1.3; overflow-wrap: anywhere; }
+  .answer.empty { border-color: var(--line); }
+  .answer.empty #answer { color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stat { background: var(--surface); border: 2px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .stat b { display: block; font-size: 38px; line-height: 1.1; }
+  .stat span { font-size: 18px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .stat.jev b { color: var(--jev); }
+  .stat.claude b { color: var(--claude); }
+  .history { list-style: none; margin: 0; padding: 0; }
+  .history li {
+    display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 12px; align-items: baseline;
+    padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 20px;
+  }
+  .history li:last-child { border-bottom: 0; }
+  .history .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history .meta { color: var(--muted); white-space: nowrap; }
+  .empty-note { color: var(--muted); font-size: 20px; margin: 0; }
+
+  /* Narrow window (e.g. squeezed next to the emulator): stack everything. */
+  @media (max-width: 1100px) {
+    main { grid-template-columns: 1fr; }
+    .timeline { max-height: none; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .app { padding: 16px; }
+    .brand { font-size: 34px; }
+  }
+  /* People who turn off motion get no pulsing or sliding. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1 class="brand">Relay</h1>
+    <div class="status" id="status" data-state="listening" role="status" aria-live="polite">
+      <span class="dot" aria-hidden="true"></span><span id="status-text">Listening</span>
+    </div>
+    <div class="badge" id="device">📱 Phone</div>
+    <div class="conn" id="conn" data-ok="true">● live</div>
+  </header>
+
+  <main>
+    <section class="col" aria-label="Current task">
+      <div class="card">
+        <p class="label">You said</p>
+        <p class="heard empty" id="heard">Say something to your iPhone or Watch…</p>
+      </div>
+      <div class="card timeline-card">
+        <p class="label">What Relay is doing</p>
+        <ol class="timeline" id="timeline" aria-live="polite"></ol>
+      </div>
+    </section>
+
+    <section class="col" aria-label="Result and history">
+      <div class="card answer empty" id="answer-card">
+        <p class="label">Relay said</p>
+        <p id="answer">…</p>
+      </div>
+      <div class="stats" aria-label="Stats for this task">
+        <div class="stat"><b id="st-steps">0</b><span>steps</span></div>
+        <div class="stat jev"><b id="st-jev">0</b><span>⚡ Jev</span></div>
+        <div class="stat claude"><b id="st-claude">0</b><span>🧠 Claude</span></div>
+        <div class="stat"><b id="st-time">0.0s</b><span>time</span></div>
+      </div>
+      <div class="card">
+        <p class="label">Earlier</p>
+        <ul class="history" id="history"></ul>
+        <p class="empty-note" id="history-empty">Nothing yet.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// Relay live dashboard.
+//  1. GET /events/recent  -> replay recent events so the page isn't empty.
+//  2. EventSource(/events/stream) -> every new event arrives here, live.
+// SECURITY: event text comes from speech and from apps on the phone, so we
+// ONLY put it on the page with textContent (never innerHTML).
+// ---------------------------------------------------------------------------
+
+const TOKEN = new URLSearchParams(location.search).get("token") || "";
+const withToken = (path) => TOKEN ? path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN) : path;
+const $ = (id) => document.getElementById(id);
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Make an element with optional class and (safe) text.
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+
+// ---- state ----
+let lastId = 0;          // newest event id we've handled
+let task = null;         // the task on screen right now
+const past = [];         // finished tasks, newest first
+let idleTimer = null;
+let replaying = false;   // true while we replay /events/recent on first load
+let skew = 0;            // our clock minus the server's clock (seconds), from server_ts
+let eventTs = 0;         // server time of the event being handled
+const serverNow = () => Date.now() / 1000 - skew;
+
+function newTask(heardText, device) {
+  if (task) archive(task);
+  task = { heard: heardText || "", device: device || null, rows: [], steps: 0, jev: 0, claude: 0,
+           startedAt: eventTs || serverNow(), seconds: null, answer: "", outcome: null, pendingBrain: null };
+  $("timeline").replaceChildren();
+  setHeard(task.heard);
+  setAnswer("");
+  if (device) setDevice(device);
+  renderStats();
+}
+
+function archive(t) {
+  if (!t.heard && !t.rows.length) return;
+  past.unshift(t);
+  past.length = Math.min(past.length, 8);
+  renderHistory();
+}
+
+// ---- small renderers ----
+function setStatus(state) {
+  const names = { listening: "Listening", working: "Working", waiting: "Waiting for you", done: "Done" };
+  $("status").dataset.state = state;
+  $("status-text").textContent = names[state];
+  clearTimeout(idleTimer);
+  if (state === "done") idleTimer = setTimeout(() => setStatus("listening"), 10000);
+}
+function setDevice(device) { $("device").textContent = device === "mac" ? "💻 Mac" : "📱 Phone"; }
+function setHeard(text) {
+  const h = $("heard");
+  h.textContent = text || "Say something to your iPhone or Watch…";
+  h.classList.toggle("empty", !text);
+}
+function setAnswer(text) {
+  $("answer").textContent = text || "…";
+  $("answer-card").classList.toggle("empty", !text);
+}
+function fmtSeconds(s) { return (Math.round(s * 10) / 10).toFixed(1) + "s"; }
+function renderStats() {
+  const t = task || { steps: 0, jev: 0, claude: 0, startedAt: serverNow(), seconds: 0 };
+  $("st-steps").textContent = t.steps;
+  $("st-jev").textContent = t.jev;
+  $("st-claude").textContent = t.claude;
+  const secs = t.seconds !== null && t.seconds !== undefined ? t.seconds : Math.max(0, serverNow() - t.startedAt);
+  $("st-time").textContent = fmtSeconds(secs);
+}
+// Tick the clock while a task is running.
+setInterval(() => { if (task && task.outcome === null) renderStats(); }, 200);
+
+function renderHistory() {
+  const list = $("history");
+  list.replaceChildren();
+  for (const t of past) {
+    const icon = { done: "✓", cancelled: "✕", error: "⚠", repeat: "↻" }[t.outcome] || "•";
+    const li = el("li");
+    li.append(el("span", "", icon));
+    const what = el("span", "what", "“" + (t.heard || "…") + "”" + (t.answer ? "  →  " + t.answer : ""));
+    what.title = what.textContent;
+    li.append(what);
+    const bits = [];
+    if (t.seconds !== null) bits.push(fmtSeconds(t.seconds));
+    if (t.jev || t.claude) bits.push("⚡" + t.jev + " 🧠" + t.claude);
+    li.append(el("span", "meta", bits.join(" · ")));
+    list.append(li);
+  }
+  $("history-empty").hidden = past.length > 0;
+}
+
+// One timeline row: icon, main text, optional grey sub-text, optional brain pill.
+function addRow({ icon, text, sub, cls, pill }) {
+  const li = el("li", "row" + (cls ? " " + cls : "") + (replaying ? " no-anim" : ""));
+  li.append(el("span", "icon", icon || "•"));
+  const body = el("span", "text", text);
+  if (sub) body.append(el("span", "sub", sub));
+  li.append(body);
+  li.append(pill || el("span", "when", "+" + fmtSeconds(Math.max(0, eventTs - task.startedAt))));
+  $("timeline").append(li);
+  task.rows.push(li);
+  // Newest at the bottom: keep it in view.
+  const box = $("timeline");
+  box.scrollTo({ top: box.scrollHeight, behavior: reduceMotion || replaying ? "auto" : "smooth" });
+  return li;
+}
+
+function brainPill(e) {
+  const isJev = e.brain === "jev";
+  const pill = el("span", "pill " + (isJev ? "jev" : "claude"),
+                  (isJev ? "⚡ Jev " : "🧠 Claude ") + fmtSeconds((e.ms || 0) / 1000));
+  if (typeof e.conf === "number" && isJev) pill.append(el("span", "conf", Math.round(e.conf * 100) + "%"));
+  return pill;
+}
+
+// Pick an icon from the narration's first word ("Tapping Send" -> 👆).
+function stepIcon(text) {
+  const t = (text || "").toLowerCase();
+  if (t.startsWith("tapping")) return "👆";
+  if (t.startsWith("typing")) return "⌨️";
+  if (t.startsWith("scrolling")) return "↕️";
+  if (t.startsWith("opening")) return "📱";
+  if (t.startsWith("going back")) return "↩️";
+  if (t.startsWith("going home")) return "🏠";
+  if (t.startsWith("unlocking")) return "🔓";
+  if (t.startsWith("checking") || t.startsWith("reading")) return "📖";
+  if (t.startsWith("something popped up")) return "🪟";
+  return "•";
+}
+
+const ROUTES = {
+  keyword:      (e) => ({ icon: "⚡", text: "Instant command: " + pretty(e.name) }),
+  skill:        (e) => ({ icon: "⚡", text: "Instant command: " + pretty(e.name) }),
+  workflow:     (e) => ({ icon: "▶", text: "Workflow: " + (e.name || "") }),
+  routine:      ()  => ({ icon: "⟳", text: "Saved routine (no AI needed)" }),
+  describe:     ()  => ({ icon: "👁", text: "Describing the screen" }),
+  emergency:    ()  => ({ icon: "🚨", text: "Emergency: calling 911", cls: "blocked" }),
+  screen_agent: (e) => ({ icon: "👁", text: e.name === "resumed" ? "Screen agent takes over" : "Screen agent: reading the screen step by step", cls: "slow" }),
+};
+function pretty(name) { return String(name || "").replace(/_/g, " "); }
+
+// ---- the event handler: one function per event kind ----
+function handle(e) {
+  if (typeof e.id === "number") {
+    if (e.id <= lastId) return;   // already shown (reconnects can resend)
+    lastId = e.id;
+  }
+  eventTs = typeof e.ts === "number" ? e.ts : serverNow();
+  // Events can arrive before we've seen "heard" (e.g. page opened mid-task).
+  if (!task && e.kind !== "heard" && e.kind !== "task_start") newTask("", null);
+
+  switch (e.kind) {
+    case "heard":
+      newTask(e.text, e.device);
+      setStatus("working");
+      break;
+    case "task_start":
+      if (!task || task.taskId || task.outcome !== null) newTask(e.goal, e.device);
+      task.taskId = e.task_id;
+      if (!task.heard) { task.heard = e.goal || ""; setHeard(task.heard); }
+      if (e.device) { task.device = e.device; setDevice(e.device); }
+      task.startedAt = eventTs;
+      setStatus("working");
+      break;
+    case "route": {
+      const r = (ROUTES[e.how] || ((x) => ({ icon: "→", text: pretty(x.how) + " " + pretty(x.name) })))(e);
+      addRow({ icon: r.icon, text: r.text, cls: "route " + (r.cls || "") });
+      break;
+    }
+    case "brain": {
+      if (e.brain === "jev") task.jev++; else task.claude++;
+      // Show "deciding" now; the next step row replaces this text and keeps the pill.
+      const what = e.action === "done" ? "Checked: task looks finished"
+                 : e.action === "ask_user" ? "Needs to ask you something"
+                 : "Deciding: " + e.action + (e.label ? " “" + e.label + "”" : "");
+      const row = addRow({ icon: e.brain === "jev" ? "⚡" : "🧠", text: what, sub: e.fallback_reason || "", pill: brainPill(e) });
+      task.pendingBrain = (e.action === "done" || e.action === "ask_user") ? null : row;
+      break;
+    }
+    case "step": {
+      task.steps++;
+      const row = task.pendingBrain;
+      task.pendingBrain = null;
+      if (row) {   // turn "Deciding: tap Send" into "👆 Tapping Send" + the brain pill
+        row.querySelector(".icon").textContent = stepIcon(e.text);
+        const text = row.querySelector(".text");
+        const sub = text.querySelector(".sub");
+        text.textContent = e.text;
+        if (sub && sub.textContent) text.append(sub);
+      } else {
+        addRow({ icon: stepIcon(e.text), text: e.text });
+      }
+      break;
+    }
+    case "confirm":
+      task.pendingBrain = null;
+      if (e.safety) addRow({ icon: "🛡️", text: "Asked before sending", sub: e.question, cls: "confirm" });
+      else addRow({ icon: "❓", text: "Relay asked you", sub: e.question, cls: "confirm" });
+      setStatus("waiting");
+      break;
+    case "reply":
+      addRow({ icon: "🗣", text: "You: " + (e.text || ""), cls: e.yes ? "yes" : "no" });
+      setStatus("working");
+      break;
+    case "blocked":
+      task.pendingBrain = null;
+      addRow({ icon: "⛔", text: "Blocked for your safety", sub: e.message, cls: "blocked" });
+      break;
+    case "unlock":
+      addRow({ icon: "🔓", text: "Unlocked with your passphrase" });
+      break;
+    case "done":
+    case "cancelled":
+    case "error": {
+      task.pendingBrain = null;
+      task.outcome = e.kind;
+      if (typeof e.seconds === "number") task.seconds = e.seconds;
+      const icon = { done: "✓", cancelled: "✕", error: "⚠" }[e.kind];
+      const label = { done: "Done", cancelled: "Stopped", error: "Something went wrong" }[e.kind];
+      addRow({ icon: icon, text: label + (task.seconds !== null ? " in " + fmtSeconds(task.seconds) : ""),
+               cls: "end " + (e.kind === "done" ? "ok" : "bad") });
+      if (e.message && !task.answer) { task.answer = e.message; setAnswer(e.message); }
+      renderStats();
+      setStatus("done");
+      break;
+    }
+    case "answer":
+      task.answer = e.say || "";
+      setAnswer(task.answer);
+      if (task.outcome === null) { task.outcome = "done"; task.seconds = Math.max(0, eventTs - task.startedAt); renderStats(); }
+      setStatus("done");
+      break;
+    case "repeat":
+      addRow({ icon: "↻", text: "Repeating the last answer" });
+      task.answer = e.say || "";
+      task.outcome = "repeat";
+      task.seconds = 0;
+      setAnswer(task.answer);
+      renderStats();
+      setStatus("done");
+      break;
+  }
+  renderStats();
+}
+
+// ---- connection: first load, then live stream (reconnects by itself) ----
+let source = null;
+let retryTimer = null;
+
+function setConn(ok, text) {
+  $("conn").dataset.ok = String(ok);
+  $("conn").textContent = text;
+}
+
+function connect() {
+  clearTimeout(retryTimer);
+  if (source) source.close();
+  source = new EventSource(withToken("/events/stream?since=" + lastId));
+  source.onopen = () => setConn(true, "● live");
+  source.addEventListener("hello", (msg) => {
+    // If we remember a newer id than the server has, the server restarted: start over.
+    try {
+      const hello = JSON.parse(msg.data);
+      skew = Date.now() / 1000 - hello.server_ts;
+      if (hello.newest_id < lastId) lastId = 0;
+    } catch (_) {}
+  });
+  source.onmessage = (msg) => {
+    try { handle(JSON.parse(msg.data)); } catch (err) { console.warn("bad event", err); }
+  };
+  source.onerror = () => {
+    setConn(false, "○ reconnecting…");
+    // The browser retries on its own; if it gave up (CLOSED), we try again ourselves.
+    if (source.readyState === EventSource.CLOSED) retryTimer = setTimeout(connect, 3000);
+  };
+}
+
+async function start() {
+  try {
+    const res = await fetch(withToken("/events/recent"), { cache: "no-store" });
+    if (res.ok) {
+      const data = await res.json();
+      if (typeof data.server_ts === "number") skew = Date.now() / 1000 - data.server_ts;
+      replaying = true;
+      try { for (const e of data.events || []) handle(e); } finally { replaying = false; }
+      if (task && task.outcome !== null) setStatus("listening");  // old news, not "just finished"
+    } else if (res.status === 401) {
+      setConn(false, "○ add ?token=… to the URL");
+    }
+  } catch (_) { /* server not up yet: the stream will retry */ }
+  renderHistory();
+  connect();
+}
+start();
+</script>
+</body>
+</html>
