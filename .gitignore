@@ -5,3 +5,4 @@ __pycache__/
 routines.json
 audio/
 workflows.json
+.claude/
