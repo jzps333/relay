@@ -20,6 +20,7 @@ The three dashboard routes also work WITHOUT a token when opened on the Mac itse
 """
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import re
 import os
@@ -41,6 +42,14 @@ from relay import agent, config, events, remote, router, safety, skills, voice
 WAIT_SECONDS = float(os.getenv("COMMAND_WAIT_SECONDS", "45"))
 # /talk answers sooner ("Still working...") so Siri doesn't give up and close the Shortcut.
 TALK_WAIT_SECONDS = float(os.getenv("TALK_WAIT_SECONDS", "8"))
+# Hard cap on one task. A task still "running" after this long (stuck AI call, hung or
+# disconnected device helper) gets stopped, so the /talk "wait" loop can't go on forever.
+TASK_MAX_SECONDS = float(os.getenv("TASK_MAX_SECONDS", "150"))
+# Most time one /talk answer spends making ElevenLabs audio. Past this the phone just
+# uses its own voice, so a slow TTS call can't hold up the reply.
+SPEAK_MAX_SECONDS = float(os.getenv("SPEAK_MAX_SECONDS", "10"))
+TOO_LONG = "Sorry, that took too long, so I stopped. Anything else?"
+MAC_NOT_CONNECTED = "Your Mac isn't connected right now."
 PORT = 8000
 HEALTH_DEVICE_TIMEOUT = 1.5  # /health never waits longer than this for the emulator
 
@@ -53,6 +62,8 @@ _tasks: dict[str, "agent.Task"] = {}   # session_id -> Task
 _current: "agent.Task | None" = None   # the one task allowed to run at a time
 _last_device: str | None = None        # so "scroll down" goes to the device you just used
 _last_answer: str | None = None        # last final answer we spoke, for "repeat that"
+_started: dict[str, float] = {}       # task id -> time.monotonic() when _start launched it
+_gave_up: set[str] = set()             # ids of tasks stopped for taking too long
 
 # "Repeat that": answered instantly from _last_answer, no task, no AI.
 # Matched after skills._clean() removes filler ("hey relay, can you ... please").
@@ -194,10 +205,77 @@ def is_ending(text: str) -> bool:
     return t == "" or t in _ENDINGS
 
 
+_speak_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="speak")
+
+
+def _speak(say: str) -> str | None:
+    """voice.speak, but never holds up a reply longer than SPEAK_MAX_SECONDS.
+
+    httpx's timeout=15 is per read, not total, and ffmpeg adds up to 10 s more.
+    On timeout we return None and the Shortcut speaks with the phone's own voice.
+    """
+    try:
+        return _speak_pool.submit(voice.speak, say).result(SPEAK_MAX_SECONDS)
+    except concurrent.futures.TimeoutError:
+        print(f"[voice] audio took over {SPEAK_MAX_SECONDS:g}s, phone will use its own voice")
+        return None
+    except Exception as e:  # voice.speak shouldn't raise, but a reply matters more
+        print(f"[voice] speak failed: {e!r}")
+        return None
+
+
+def _device_ready() -> bool:
+    """False only in cloud mode with no device helper connected (same check as /health)."""
+    return not config.CLOUD_MODE or remote.hub.connected
+
+
+def _over_time(task) -> bool:
+    """True if `task` has been running longer than TASK_MAX_SECONDS.
+
+    A task waiting on the user's answer isn't stuck (agent._ask has its own timeout).
+    """
+    started = _started.get(task.id)
+    return (started is not None and not task.finished and task.status != "waiting"
+            and time.monotonic() - started >= TASK_MAX_SECONDS)
+
+
+def _give_up(task, request: Request) -> dict:
+    """Stop a task that ran too long and say so. Never waits for it to actually stop:
+    a task stuck inside a device or AI call can't notice the stop flag yet."""
+    global _current
+    task.stop()
+    with _lock:
+        _started.pop(task.id, None)
+        _gave_up.add(task.id)
+        _delivered.add(task.id)
+        if _current is task:
+            _current = None  # so empty "wait" polls and new runs don't latch onto it
+    print(f"[talk] task {task.id} ran over {TASK_MAX_SECONDS:g}s, stopped it", flush=True)
+    events.publish("timeout", task_id=task.id, seconds=TASK_MAX_SECONDS)
+    r = _say_only(TOO_LONG, request)
+    r["next"] = "more"
+    r["session_id"] = task.id
+    return r
+
+
+def _settle(task, request: Request, conversation: bool) -> dict:
+    """Wait (at most TALK_WAIT_SECONDS) for the next update, enforcing TASK_MAX_SECONDS."""
+    if _over_time(task):
+        return _give_up(task, request)
+    wait = TALK_WAIT_SECONDS
+    started = _started.get(task.id)
+    if started is not None:  # don't wait past the cap
+        wait = max(0.0, min(wait, TASK_MAX_SECONDS - (time.monotonic() - started)))
+    task.wait_until_settled(wait)
+    if _over_time(task):
+        return _give_up(task, request)
+    return _respond(task, request, conversation)
+
+
 def _say_only(say: str, request: Request) -> dict:
     """A reply that isn't tied to a task (e.g. "Okay, talk soon.")."""
     say = plain_text(say)
-    audio_id = voice.speak(say)
+    audio_id = _speak(say)
     audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else None
     return {"say": say, "audio_url": audio_url, "needs_reply": False, "next": "done", "session_id": ""}
 
@@ -214,7 +292,7 @@ def _respond(task, request: Request, conversation: bool = False) -> dict:
     if ask_more:
         _remember_answer(say)  # "repeat that" repeats the answer, not the question
         say = f"{say} Anything else?"
-    audio_id = voice.speak(say)
+    audio_id = _speak(say)
     audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else None
     if task.status == "waiting":
         next_step = "reply"   # Relay asked a question: listen, then POST /reply with the answer
@@ -245,7 +323,7 @@ def _repeat_response(request: Request) -> dict:
     """Speak the last final answer again (instant: no task, no AI)."""
     say = _last_answer or NOTHING_TO_REPEAT
     events.publish("repeat", say=say)  # live dashboard
-    audio_id = voice.speak(say)
+    audio_id = _speak(say)
     audio_url = f"{str(request.base_url).rstrip('/')}/audio/{audio_id}.mp3" if audio_id else None
     return {"say": say, "audio_url": audio_url, "needs_reply": False, "next": "done", "session_id": ""}
 
@@ -310,6 +388,9 @@ def _start(text: str, device: str | None, request: Request, conversation: bool) 
     # "Repeat that" never starts a task, and never stops the one that's running.
     if is_repeat(text):
         return _repeat_response(request)
+    # Cloud mode with no Mac helper: every device call would fail, so say so right away.
+    if not _device_ready():
+        return _say_only(MAC_NOT_CONNECTED, request)
     with _lock:
         if _current is not None and not _current.finished:
             _current.stop()  # a new command replaces the old one
@@ -317,6 +398,7 @@ def _start(text: str, device: str | None, request: Request, conversation: bool) 
         _tasks[task.id] = task
         _current = task
         _last_device = task.device_name
+        _started[task.id] = time.monotonic()
     task.start()
     task.wait_until_settled(TALK_WAIT_SECONDS if conversation else WAIT_SECONDS)
     return _respond(task, request, conversation)
@@ -340,15 +422,21 @@ def talk(body: TalkIn, request: Request) -> dict:
         task = _current
     # The task finished between two check-ins: speak its result before anything else,
     # so "Sent your email" isn't skipped straight to "Okay, talk soon."
+    # A task we already gave up on (TASK_MAX_SECONDS) may still be "running" inside a
+    # stuck call. Treat it as over, so silence ends the chat instead of waiting again.
+    if task is not None and task.id in _gave_up:
+        task = None
     if task is not None and task.finished and task.id not in _delivered:
         return _respond(task, request, body.conversation)
     if task is not None and task.status == "waiting":
+        if not (body.text or "").strip():
+            # Dictation caught nothing: ask the question again rather than answering
+            # it with "" (which would cancel). agent._ask's REPLY_TIMEOUT still applies.
+            return _respond(task, request, body.conversation)
         task.reply(body.text)                     # answer to "Should I send it?"
-        task.wait_until_settled(TALK_WAIT_SECONDS)
-        return _respond(task, request, body.conversation)
+        return _settle(task, request, body.conversation)
     if task is not None and not task.finished:
-        task.wait_until_settled(TALK_WAIT_SECONDS)  # still working: next update
-        return _respond(task, request, body.conversation)
+        return _settle(task, request, body.conversation)  # still working: next update
     if not (body.text or "").strip() and not body.session_id:
         # Started, but dictation caught nothing: say so and listen again.
         r = _say_only("Sorry, I didn't catch that. Go ahead.", request)
