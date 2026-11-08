@@ -24,8 +24,9 @@ KEEP_FILES = 20                         # only the newest 20 mp3s stay on disk
 # loudnorm evens out the level, then a limiter stops it clipping. VOICE_BOOST=0 turns it off.
 VOICE_BOOST = os.getenv("VOICE_BOOST", "1") == "1"
 # compressor squashes the quiet/loud gap, loudnorm pushes the level up, limiter prevents clipping
-LOUD_FILTER = ("acompressor=threshold=0.05:ratio=6:attack=5:release=60:makeup=4,"
-               "loudnorm=I=-7:TP=-0.5:LRA=4,alimiter=limit=0.97")
+LOUD_FILTER = ("highpass=f=120,"                       # cut rumble the tiny speaker can't play
+               "acompressor=threshold=0.02:ratio=20:attack=2:release=40:makeup=8,"
+               "volume=8dB,alimiter=limit=0.99:level=false")  # as loud as an mp3 can go
 
 
 def louder(mp3: bytes) -> bytes:
