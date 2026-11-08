@@ -14,7 +14,7 @@ RELAY_TOKEN = os.getenv("RELAY_TOKEN", "change-me")
 
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-JEV_MIN_CONFIDENCE = float(os.getenv("JEV_MIN_CONFIDENCE", "0.5"))
+JEV_MIN_CONFIDENCE = float(os.getenv("JEV_MIN_CONFIDENCE", "0.45"))
 MAX_STEPS = int(os.getenv("MAX_STEPS", "25"))
 DEFAULT_DEVICE = os.getenv("DEFAULT_DEVICE", "phone")
 ADB_SERIAL = os.getenv("ADB_SERIAL", "")  # empty = first device

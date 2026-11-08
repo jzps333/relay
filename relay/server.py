@@ -45,7 +45,7 @@ WAIT_SECONDS = float(os.getenv("COMMAND_WAIT_SECONDS", "45"))
 TALK_WAIT_SECONDS = float(os.getenv("TALK_WAIT_SECONDS", "8"))
 # Hard cap on one task. A task still "running" after this long (stuck AI call, hung or
 # disconnected device helper) gets stopped, so the /talk "wait" loop can't go on forever.
-TASK_MAX_SECONDS = float(os.getenv("TASK_MAX_SECONDS", "150"))
+TASK_MAX_SECONDS = float(os.getenv("TASK_MAX_SECONDS", "300"))
 # Most time one /talk answer spends making ElevenLabs audio. Past this the phone just
 # uses its own voice, so a slow TTS call can't hold up the reply.
 SPEAK_MAX_SECONDS = float(os.getenv("SPEAK_MAX_SECONDS", "10"))
