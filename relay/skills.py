@@ -19,9 +19,11 @@ import logging
 import re
 import os
 import time
+from dataclasses import dataclass
 from urllib.parse import quote
 
 from relay import config, events
+from relay.types import Element, Screen
 
 log = logging.getLogger("relay.skills")
 
@@ -348,11 +350,26 @@ def route(goal: str, device_name: str) -> tuple[str, dict] | None:
     return None
 
 
+MAPS_PACKAGE = "com.google.android.apps.maps"
+
+
+def _nav_mode(params: dict) -> str:
+    """'walking' -> 'w' etc. for the google.navigation: intent (default driving)."""
+    return {"walking": "w", "bicycling": "b"}.get(params.get("mode") or "", "d")
+
+
+def _launch_navigation(device, dest: str, mode: str) -> None:
+    # Quit Maps first: if an old route (or results list) is still showing, a new
+    # request can get ignored and you keep the old screen.
+    device.close_app("maps")
+    device.open_uri(f"google.navigation:q={quote(dest)}&mode={mode}", package=MAPS_PACKAGE)
+
+
 def run(name: str, params: dict, device) -> str:
     """Do the skill on the phone and return a short sentence to speak."""
     if name == "navigate":
         dest = params["destination"]
-        mode = {"walking": "w", "bicycling": "b"}.get(params.get("mode", ""), "d")
+        mode = _nav_mode(params)
         # Directions need location. Grant it up front so Maps never asks
         # (and the agent can't accidentally tap "Don't allow").
         if hasattr(device, "grant_location"):
@@ -365,10 +382,7 @@ def run(name: str, params: dict, device) -> str:
                 synced = location.sync_emulator_to_mac()
             if synced:
                 time.sleep(1.0)  # give the emulator's GPS a moment to report the new spot
-        # Quit Maps first: if an old route is still running, a new request just
-        # gets ignored and you keep the old directions.
-        device.close_app("maps")
-        device.open_uri(f"google.navigation:q={quote(dest)}&mode={mode}", package="com.google.android.apps.maps")
+        _launch_navigation(device, dest, mode)
         return f"Starting directions to {dest}."
 
     if name == "media":
@@ -441,6 +455,142 @@ def navigation_running(device) -> bool:
     if "directions" in texts and ("sponsored" in texts or "add stop" in texts or "call" in texts):
         return False  # that's the search results list
     return any(w in texts for w in ("exit navigation", "close navigation", "re-center", "recenter"))
+
+
+NAV_WAIT = 8.0  # seconds to wait for Maps to start turn-by-turn after we ask
+
+
+def wait_for_navigation(device, timeout: float | None = None) -> bool:
+    """Poll navigation_running every half second for up to `timeout` (NAV_WAIT) seconds."""
+    deadline = time.monotonic() + (NAV_WAIT if timeout is None else timeout)
+    while True:
+        time.sleep(0.5)
+        if navigation_running(device):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+
+
+# ---------------------------------------------------------------------------
+# Results list -> turn-by-turn, without the AI
+# ---------------------------------------------------------------------------
+# A vague place ("nearest Starbucks") makes Maps show a list of results. Each
+# result row ends with its own "Directions" button, and the list is sorted by
+# relevance/distance, so the first row that isn't an ad is the one to pick.
+
+# Labels that are buttons, filter chips or the search box, never a place name.
+_NOT_A_NAME = re.compile(
+    r"^(?:search here|search|directions(?: to .*)?|call|website|share|save|menu|order online|order|"
+    r"start(?: navigation)?|reserve(?: a table)?|open now|top rated|price|hours|sort by|relevance|distance|filters?|all filters|more|"
+    r"back|navigate up|clear|close|voice search|list view|map view|view map|show map|show list|"
+    r"results?\b.*|sponsored|ad|ads)$", re.I)
+# "Open · Closes 9 PM", "Closed", "Opens 6 AM".
+_HOURS = re.compile(r"^(?:open|closed|opens|closes|temporarily closed|permanently closed)\b", re.I)
+# Only numbers, ratings, prices or distances: "4.2", "(1,234)", "$$", "0.3 mi", "5 min".
+_JUST_NUMBERS = re.compile(r"^[\d.,()\s$★·•+-]*(?:stars?|reviews?|mi|km|ft|m|min)?[\d.,()\s]*$", re.I)
+# A street address: house number then a word ("1201 W Broad St").
+_STREET = re.compile(r"^\d+[A-Za-z]?\s+[A-Za-z]")
+_START = re.compile(r"^start\b", re.I)  # "Start", "Start navigation" (not "Get started")
+
+
+@dataclass
+class Place:
+    name: str
+    address: str
+    directions_id: int  # this row's Directions button
+
+
+def _parts(text: str) -> list[str]:
+    """Split "Coffee shop · 1201 W Broad St" (and " / " fallback labels) into pieces."""
+    return [p.strip() for p in re.split(r"\s+[·•/]\s+|\s*[·•]\s*", text) if p.strip()]
+
+
+def _looks_like_name(text: str) -> bool:
+    return (any(c.isalpha() for c in text) and len(text) <= 60
+            and not (_NOT_A_NAME.match(text) or _HOURS.match(text) or _JUST_NUMBERS.match(text)))
+
+
+def _is_ad(texts: list[str]) -> bool:
+    return any(t.lower() in ("sponsored", "ad", "ads") or t.lower().startswith(("sponsored", "ad ·"))
+               for t in texts)
+
+
+def _row_place(texts: list[str], directions: Element) -> Place | None:
+    """Name and address of one result row (the texts before its Directions button)."""
+    if _is_ad(texts):
+        return None
+    pieces = [p for t in texts for p in _parts(t)]
+    m = re.match(r"(?i)^directions to (.+)$", directions.text.strip())  # content-desc can name the place
+    name = m.group(1).strip() if m else next((p for p in pieces if _looks_like_name(p)), "")
+    address = next((p for p in pieces if _STREET.match(p)), "")
+    return Place(name, address, directions.id) if name else None
+
+
+def _is_search_box(el: Element, query: str) -> bool:
+    """The search box (shows what was searched), not a result. A plain-text
+    result row can still be named exactly like the query ("Starbucks")."""
+    return el.kind == "input" or (el.clickable and el.text.strip().lower() == query.strip().lower())
+
+
+def pick_result(screen: Screen, query: str = "") -> Place | None:
+    """The first non-sponsored result on a Maps results list, or None."""
+    row: list[str] = []
+    for el in screen.elements:
+        text = (el.text or "").strip()
+        if el.clickable and text.lower().startswith("directions"):
+            place = _row_place(row, el)
+            if place is not None:
+                return place
+            row = []
+        elif text and not _is_search_box(el, query):
+            row.append(text)
+    return None
+
+
+def start_button(screen: Screen) -> int | None:
+    """Id of a clickable "Start" (route preview) button, or None."""
+    for el in screen.elements:
+        if el.clickable and _START.match((el.text or "").strip()):
+            return el.id
+    return None
+
+
+def _tap_directions_then_start(device, screen: Screen, place: Place) -> bool:
+    from relay.types import Action
+
+    device.act(Action(kind="tap", element_id=place.directions_id), screen)
+    for _ in range(6):  # the route preview takes a moment to load
+        time.sleep(0.5)
+        preview = device.get_screen()
+        start = start_button(preview)
+        if start is not None:
+            device.act(Action(kind="tap", element_id=start), preview)
+            return wait_for_navigation(device)
+    return False
+
+
+def start_top_result(device, params: dict) -> str | None:
+    """Maps is showing a results list: start turn-by-turn to the top real result.
+
+    With an address, re-launch the navigation intent with "name, address" (exact,
+    so Maps goes straight to the route). Without one, tap that row's Directions,
+    then Start. Returns the place name once navigation is running, else None.
+    """
+    try:
+        screen = device.get_screen()
+        place = pick_result(screen, params.get("destination", ""))
+        if place is None:
+            return None
+        log.info("navigate: top result %r %r", place.name, place.address)
+        if place.address:
+            _launch_navigation(device, f"{place.name}, {place.address}", _nav_mode(params))
+            ok = wait_for_navigation(device)
+        else:
+            ok = _tap_directions_then_start(device, screen, place)
+    except Exception as e:
+        log.info("navigate: couldn't start the top result: %r", e)
+        return None
+    return place.name if ok else None
 
 
 

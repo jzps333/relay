@@ -277,12 +277,7 @@ class Task:
                     # A vague place ("nearest Starbucks") can land on a list of
                     # results instead of a route. Then pick the closest and start.
                     if name == "navigate" and not skills.navigation_running(device):
-                        self._narrate("Picking the closest one")
-                        self.goal = (f"{self.goal}. Google Maps is showing a list of places. Pick the "
-                                     f"CLOSEST one (skip 'Sponsored' unless it's also closest), tap "
-                                     f"Directions, then Start. Don't ask the user. Use done once "
-                                     f"turn-by-turn navigation is running, and say where and how far.")
-                        return self._loop(device, safety, routines, resumed=True)
+                        return self._navigate_from_results(device, safety, routines, skills, params)
                     return said
                 self._narrate(f"Something popped up ({blocker}), handling it")
                 # Usually the shortcut already worked and a popup just sits on top.
@@ -310,6 +305,20 @@ class Task:
 
         # 6. Plan + step loop.
         return self._loop(device, safety, routines, resumed)
+
+    def _navigate_from_results(self, device, safety, routines, skills, params: dict) -> str:
+        """Maps showed a results list: start the top real result, no AI if possible."""
+        self._narrate("Picking the closest one")
+        place = skills.start_top_result(device, params)
+        if place:
+            return f"Starting directions to {place}."
+        # Fallback: the screen agent picks and starts. The loop finishes by
+        # itself as soon as turn-by-turn is running (see nav_check in _loop).
+        self.goal = (f"{self.goal}. Google Maps is showing a list of places. Tap the FIRST result "
+                     f"that is not 'Sponsored', tap its Directions, then tap Start. When a Start "
+                     f"button is on screen, tap Start: never go back or scroll from that screen. "
+                     f"Don't ask the user. Use done as soon as turn-by-turn navigation is running.")
+        return self._loop(device, safety, routines, resumed=True, nav_check=skills)
 
     def _email_summary(self, device, safety, skills, params: dict) -> str:
         """Open Gmail, read the inbox list, and summarize it out loud."""
@@ -405,7 +414,8 @@ class Task:
             print(f"[agent] gemini describe failed, using claude: {e!r}")
             return claude.describe_screen(screen)
 
-    def _loop(self, device, safety, routines, resumed: bool = False) -> str:
+    def _loop(self, device, safety, routines, resumed: bool = False, nav_check=None) -> str:
+        """nav_check: the skills module when finishing a Maps navigation (see _navigate_from_results)."""
         from relay.brains import claude, picker
 
         # If we just read the user a summary (emails, notifications, news), put it
@@ -453,6 +463,8 @@ class Task:
                     final = "Message sent."   # Send was tapped: that's the end of it
                     goal_finished = True
                     break
+                if nav_check is not None:
+                    action = self._prefer_start(action, screen, nav_check)
 
                 # Jev can say a middle step is done (fast, no Claude call). On the
                 # LAST step, Claude double-checks the screen and writes the summary.
@@ -525,6 +537,11 @@ class Task:
                 # Stop here instead of wandering on (and saying "still working").
                 if action.kind == "tap" and _SEND_BUTTON.search(label or "") and _SEND_GOAL.search(goal):
                     just_sent = True  # next pass: accept the brain's "done", or stop anyway
+                # Navigating: finish the moment turn-by-turn is running.
+                if nav_check is not None and nav_check.navigation_running(device):
+                    final = "Navigation started."
+                    goal_finished = True
+                    break
 
         # 5. It worked: remember it so next time is instant. Not when the steps
         # depended on a summary ("the second one" means something else tomorrow).
@@ -534,6 +551,17 @@ class Task:
             except Exception as e:
                 print(f"[agent] couldn't save routine: {e!r}")
         return final
+
+    @staticmethod
+    def _prefer_start(action: Action, screen: Screen, skills) -> Action:
+        """On Maps' route preview, Start is the only right move (never back out of it)."""
+        start = skills.start_button(screen)
+        if start is None or action.kind in ("done", "ask_user"):
+            return action
+        if action.kind == "tap" and action.element_id == start:
+            return action
+        return Action("tap", element_id=start, source=action.source,
+                      reason="Start is on screen: tap it to begin navigation")
 
     @staticmethod
     def _is_secret_field(action: Action, screen: Screen) -> bool:

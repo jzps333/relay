@@ -45,7 +45,10 @@ TIPS: dict[str, str] = {
     "com.google.android.apps.maps": "\n".join([
         "- Use the \"Search here\" box at the top to find a place or address.",
         "- On a place's card, look for a \"Directions\" button, then pick a mode (car, transit, walk).",
-        "- Tap \"Start\" to begin turn-by-turn navigation.",
+        "- On a results list, pick the first result that is not \"Sponsored\" and tap its \"Directions\".",
+        "- On the route preview, tap \"Start\" to begin turn-by-turn navigation. If a \"Start\" button "
+        "is showing, tap it: never press back or scroll away from that screen.",
+        "- Once you see \"Exit navigation\" or \"Re-center\", navigation is running: use done.",
         "- If asked for location permission, allow it; directions need it.",
     ]),
     # Spotify
