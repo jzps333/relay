@@ -5,6 +5,9 @@ Shortcut falls back to iOS's built-in "Speak Text" action, so Relay never goes s
 """
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -17,6 +20,26 @@ TTS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 MODEL_ID = "eleven_flash_v2_5"          # ElevenLabs' low-latency model (~75 ms)
 DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # premade "Rachel": calm and clear, good for driving
 KEEP_FILES = 20                         # only the newest 20 mp3s stay on disk
+# ElevenLabs audio is quiet on a watch speaker. If ffmpeg is installed, make it louder:
+# loudnorm evens out the level, then a limiter stops it clipping. VOICE_BOOST=0 turns it off.
+VOICE_BOOST = os.getenv("VOICE_BOOST", "1") == "1"
+LOUD_FILTER = "loudnorm=I=-10:TP=-1.0:LRA=7,alimiter=limit=0.95"
+
+
+def louder(mp3: bytes) -> bytes:
+    """Return a louder copy of `mp3`, or the original if ffmpeg isn't there or fails."""
+    if not VOICE_BOOST or not shutil.which("ffmpeg"):
+        return mp3
+    try:
+        out = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+             "-af", LOUD_FILTER, "-ar", "44100", "-b:a", "128k", "-f", "mp3", "pipe:1"],
+            input=mp3, capture_output=True, timeout=10, check=True,
+        ).stdout
+        return out or mp3
+    except (subprocess.SubprocessError, OSError) as e:
+        print(f"[voice] boost skipped: {e}")
+        return mp3
 
 
 def speak(text: str) -> str | None:
@@ -41,7 +64,7 @@ def speak(text: str) -> str | None:
     audio_id = uuid.uuid4().hex[:12]
     try:
         AUDIO_DIR.mkdir(exist_ok=True)
-        (AUDIO_DIR / f"{audio_id}.mp3").write_bytes(r.content)
+        (AUDIO_DIR / f"{audio_id}.mp3").write_bytes(louder(r.content))
     except OSError as e:  # disk full, no permission... fall back to the phone's voice
         print(f"[voice] couldn't save audio, phone will use its own voice: {e}")
         return None

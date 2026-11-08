@@ -70,3 +70,8 @@ def test_audio_path_blocks_unsafe_ids(tmp_path, monkeypatch):
     monkeypatch.setattr(voice, "AUDIO_DIR", tmp_path)
     assert voice.audio_path("../etc/passwd") is None
     assert voice.audio_path("missing") is None
+
+
+def test_louder_falls_back_on_bad_audio():
+    from relay import voice
+    assert voice.louder(b"not an mp3") == b"not an mp3"
