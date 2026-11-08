@@ -39,6 +39,10 @@ class Cancelled(Exception):
     """Raised inside the loop when the user stops the task (or never answers)."""
 
 
+_SEND_BUTTON = re.compile(r"^\s*send\b", re.I)          # "Send", "Send SMS", "Send message"
+_SEND_GOAL = re.compile(r"\b(text|message|msg|send|email|e-mail|dm|reply|tell)\b", re.I)
+
+
 def _is_yes(text: str) -> bool:
     # Use the shared safety check so "okay, don't" counts as NO, not yes.
     from relay import safety
@@ -512,6 +516,12 @@ class Task:
                 done_steps.append((screen, action))
                 self._narrate(_describe_action(action, screen))
                 time.sleep(SETTLE_SECONDS)  # let the screen finish changing before reading it again
+                # Tapping Send IS the end of a "text/message/email someone" request.
+                # Stop here instead of wandering on (and saying "still working").
+                if action.kind == "tap" and _SEND_BUTTON.search(label or "") and _SEND_GOAL.search(goal):
+                    final = "Message sent."
+                    goal_finished = True
+                    break
 
         # 5. It worked: remember it so next time is instant. Not when the steps
         # depended on a summary ("the second one" means something else tomorrow).
