@@ -23,7 +23,9 @@ KEEP_FILES = 20                         # only the newest 20 mp3s stay on disk
 # ElevenLabs audio is quiet on a watch speaker. If ffmpeg is installed, make it louder:
 # loudnorm evens out the level, then a limiter stops it clipping. VOICE_BOOST=0 turns it off.
 VOICE_BOOST = os.getenv("VOICE_BOOST", "1") == "1"
-LOUD_FILTER = "loudnorm=I=-10:TP=-1.0:LRA=7,alimiter=limit=0.95"
+# compressor squashes the quiet/loud gap, loudnorm pushes the level up, limiter prevents clipping
+LOUD_FILTER = ("acompressor=threshold=0.05:ratio=6:attack=5:release=60:makeup=4,"
+               "loudnorm=I=-7:TP=-0.5:LRA=4,alimiter=limit=0.97")
 
 
 def louder(mp3: bytes) -> bytes:
