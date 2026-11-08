@@ -43,3 +43,12 @@ WORKFLOWS_PATH = os.getenv("WORKFLOWS_PATH", "workflows.json")
 # Most X accounts read in one briefing, and screens scrolled per account.
 MAX_NEWS_ACCOUNTS = int(os.getenv("MAX_NEWS_ACCOUNTS", "6"))
 NEWS_PAGES_PER_ACCOUNT = int(os.getenv("NEWS_PAGES_PER_ACCOUNT", "2"))
+
+# --- Cloud mode (optional, off by default; see deploy/VULTR.md) ---
+# CLOUD_MODE=1 on a cloud server (e.g. a Vultr VPS): the AI "brain" runs there and
+# sends every tap/type/screenshot to `python -m relay.device_helper` on your Mac.
+CLOUD_MODE = os.getenv("CLOUD_MODE", "").strip().lower() in ("1", "true", "yes")
+# Seconds the server waits for the Mac's helper to answer one device call.
+REMOTE_TIMEOUT = float(os.getenv("REMOTE_TIMEOUT", "30"))
+# Where the helper connects to (or pass --server). e.g. https://1-2-3-4.sslip.io
+RELAY_SERVER = os.getenv("RELAY_SERVER", "")

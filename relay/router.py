@@ -55,7 +55,23 @@ _lock = threading.Lock()
 
 
 def get_device(name: str):
-    """Return the shared Phone() or Mac() instance, creating it on first use."""
+    """Return the device to use for `name` ("phone" or "mac").
+
+    Normal (local) mode: the real Phone() / Mac() on this computer.
+    Cloud mode (CLOUD_MODE=1): a RemoteDevice that forwards every call to the
+    device helper running on your Mac (see relay/remote.py).
+    """
+    if config.CLOUD_MODE:
+        from relay import remote
+        return remote.get_remote_device(name)
+    return get_local_device(name)
+
+
+def get_local_device(name: str):
+    """Return the shared Phone() or Mac() instance, creating it on first use.
+
+    Always local, even in cloud mode: the Mac's device helper uses this.
+    """
     with _lock:
         if name not in _devices:
             # Imported here (not at the top) so the server still starts on a machine
