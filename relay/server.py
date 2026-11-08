@@ -64,7 +64,7 @@ _current: "agent.Task | None" = None   # the one task allowed to run at a time
 _last_device: str | None = None        # so "scroll down" goes to the device you just used
 _last_answer: str | None = None        # last final answer we spoke, for "repeat that"
 _started: dict[str, float] = {}       # task id -> time.monotonic() when _start launched it
-_gave_up: set[str] = set()             # ids of tasks stopped for taking too long
+_gave_up: set[str] = set()             # ids of tasks we stopped (too long, or "stop"): treat as over
 
 # "Repeat that": answered instantly from _last_answer, no task, no AI.
 # Matched after skills._clean() removes filler ("hey relay, can you ... please").
@@ -195,7 +195,10 @@ _ENDINGS = {"no", "nope", "nah", "no thanks", "no thank you", "thats all", "that
             "thats it", "that's it", "im good", "i'm good", "im done", "i'm done", "nothing",
             "nothing else", "all done", "done", "bye", "goodbye", "stop", "cancel", "never mind",
             "nevermind", "no that's all", "no thats all", "no i'm good", "no im good", "thanks",
-            "thank you", "no that's it"}
+            "thank you", "no that's it", "no thats it", "thanks a lot", "thanks so much",
+            "thank you so much", "thats all thanks", "that's all thanks", "thats all thank you",
+            "that's all thank you", "ok thanks", "okay thanks", "ok thank you", "okay thank you",
+            "great thanks", "perfect thanks", "cool thanks", "thanks relay", "thank you relay"}
 
 
 _delivered: set[str] = set()  # ids of finished tasks whose result was already spoken
@@ -261,6 +264,49 @@ def _give_up(task, request: Request) -> dict:
     r["next"] = "more"
     r["session_id"] = task.id
     return r
+
+
+STOPPED = "Okay, stopped."
+
+
+def _stop_now(task, request: Request, conversation: bool) -> dict:
+    """The user said "stop" / "cancel" / "never mind" while Relay was busy.
+
+    Stop the task and answer right away (like _give_up, never waits for it to stop).
+    """
+    global _current
+    task.stop()
+    with _lock:
+        _started.pop(task.id, None)
+        _gave_up.add(task.id)    # still "running" inside a stuck call? treat it as over
+        _delivered.add(task.id)  # don't speak "Okay, I stopped." again on the next turn
+        if _current is task:
+            _current = None
+    print(f"[talk] stopped task {task.id} on request", flush=True)
+    events.publish("stopped", task_id=task.id)
+    r = _say_only(f"{STOPPED} Anything else?" if conversation else STOPPED, request)
+    r["next"] = "more" if conversation else "done"
+    r["session_id"] = task.id
+    return r
+
+
+# Short things said while Relay is busy that aren't a new request ("okay", "thanks").
+_ACKS = {"ok", "okay", "alright", "all right", "sure", "got it", "cool", "great", "hmm",
+         "um", "uh", "huh", "what", "wait", "hold on", "yes", "yeah"}
+
+
+def _is_new_request(text: str, task) -> bool:
+    """True if `text`, said while `task` is still running, is a different request.
+
+    Silence, the same request re-sent, "repeat that", short yes/no/okay and endings
+    ("no", "thanks") are just check-ins: keep the task going and give its next update.
+    """
+    t = _norm(text)
+    if not t or t == _norm(task.text) or is_repeat(text) or is_ending(text) or t in _ACKS:
+        return False
+    if len(t.split()) <= 3 and (safety.is_yes(text) or safety.is_no(text)):
+        return False  # e.g. a stale "yes" re-sent by the Shortcut
+    return True
 
 
 def _settle(task, request: Request, conversation: bool) -> dict:
@@ -440,18 +486,36 @@ def talk(body: TalkIn, request: Request) -> dict:
     if task is not None and task.finished and task.id not in _delivered:
         return _respond(task, request, body.conversation)
     if task is not None and task.status == "waiting":
-        if not (body.text or "").strip() or _norm(body.text) == _norm(task.text):
+        if not (body.text or "").strip() or _norm(body.text) == _norm(task.text) \
+                or is_repeat(body.text):
             # Dictation caught nothing (or the old request was re-sent): ask the question again rather than answering
             # it with "" (which would cancel). agent._ask's REPLY_TIMEOUT still applies.
             return _respond(task, request, body.conversation)
         task.reply(body.text)                     # answer to "Should I send it?"
         return _settle(task, request, body.conversation)
+    # "Stop" / "cancel" / "never mind" while Relay is busy: stop it now, not a check-in.
+    busy = task if task is not None else _current
+    if busy is not None and not busy.finished and busy.id not in _gave_up \
+            and (body.text or "").strip() and safety.is_stop(body.text):
+        return _stop_now(busy, request, body.conversation)
     if task is not None and not task.finished:
+        if _is_new_request(body.text, task):
+            # A different request while the old one runs: the user moved on.
+            # _start stops the old task and starts this one.
+            print(f"[talk] new request replaces task {task.id}", flush=True)
+            return _start(body.text, body.device, request, body.conversation)
         return _settle(task, request, body.conversation)  # still working: next update
     if not (body.text or "").strip() and not body.session_id:
         # Started, but dictation caught nothing: say so and listen again.
         r = _say_only("Sorry, I didn't catch that. Go ahead.", request)
         r["next"] = "more"
+        return r
+    if is_repeat(body.text):
+        # "Repeat that" mid-conversation: say the last answer again and keep listening.
+        events.publish("heard", text=body.text, device=body.device)
+        r = _repeat_response(request)
+        if body.conversation:
+            r["next"] = "more"
         return r
     if is_ending(body.text):
         events.publish("heard", text=body.text, device=body.device)

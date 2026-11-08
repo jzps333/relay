@@ -159,3 +159,114 @@ def test_resent_request_reasks_question(client):
     client.post("/talk", json={"text": "confirm send"}, headers=AUTH)
     r = client.post("/talk", json={"text": "Confirm send."}, headers=AUTH).json()
     assert r["next"] == "reply" and FakeTask.instances[-1].replies == []
+
+
+# --- things said in the middle of a conversation ------------------------------
+def test_stop_while_running_stops_the_task(client):
+    for phrase in ["stop", "cancel", "never mind", "okay, cancel that"]:
+        r = client.post("/talk", json={"text": "slow task", "conversation": True}, headers=AUTH).json()
+        assert r["next"] == "wait"
+        task = FakeTask.instances[-1]
+        s = client.post("/talk", json={"text": phrase, "session_id": r["session_id"],
+                                       "conversation": True}, headers=AUTH).json()
+        assert task.stopped, phrase
+        assert s["say"] == "Okay, stopped. Anything else?" and s["next"] == "more"
+        assert server._current is None
+        # The stopped task's "Okay, I stopped." isn't spoken again; "no" now ends.
+        e = client.post("/talk", json={"text": "no", "session_id": s["session_id"],
+                                       "conversation": True}, headers=AUTH).json()
+        assert e["say"] == "Okay, talk soon." and e["next"] == "done"
+
+
+def test_stop_while_running_without_session_still_stops(client):
+    client.post("/talk", json={"text": "slow task"}, headers=AUTH)
+    r = client.post("/talk", json={"text": "stop", "conversation": True}, headers=AUTH).json()
+    assert FakeTask.instances[-1].stopped and r["next"] == "more"
+
+
+def test_stop_on_a_stuck_task_doesnt_keep_waiting(client, monkeypatch):
+    monkeypatch.setattr(FakeTask, "stop", lambda self: setattr(self, "stopped", True))
+    r = client.post("/talk", json={"text": "slow task"}, headers=AUTH).json()
+    client.post("/talk", json={"text": "stop", "session_id": r["session_id"]}, headers=AUTH)
+    assert FakeTask.instances[-1].status == "running"  # ignored stop()
+    r2 = client.post("/talk", json={"text": "", "session_id": r["session_id"]}, headers=AUTH).json()
+    assert r2["say"] == "Okay, talk soon." and r2["next"] == "done"
+
+
+def test_stop_after_finished_task_still_ends(client):
+    first = client.post("/talk", json={"text": "open maps"}, headers=AUTH).json()
+    r = client.post("/talk", json={"text": "stop", "session_id": first["session_id"]}, headers=AUTH).json()
+    assert r["say"] == "Okay, talk soon." and r["next"] == "done"
+
+
+def test_repeat_in_talk_keeps_the_conversation_going(client):
+    first = client.post("/talk", json={"text": "open maps", "conversation": True}, headers=AUTH).json()
+    for phrase in ["repeat that", "say that again", "what did you say"]:
+        r = client.post("/talk", json={"text": phrase, "session_id": first["session_id"],
+                                       "conversation": True}, headers=AUTH).json()
+        assert r["say"] == "Did: open maps" and r["next"] == "more"
+    assert len(FakeTask.instances) == 1  # no task started
+
+
+def test_repeat_while_running_is_a_check_in(client):
+    r = client.post("/talk", json={"text": "slow task"}, headers=AUTH).json()
+    r2 = client.post("/talk", json={"text": "repeat that", "session_id": r["session_id"]}, headers=AUTH).json()
+    assert r2["next"] == "wait" and len(FakeTask.instances) == 1
+    assert not FakeTask.instances[0].stopped
+
+
+def test_repeat_during_question_asks_it_again(client):
+    q = client.post("/talk", json={"text": "confirm send"}, headers=AUTH).json()
+    r = client.post("/talk", json={"text": "say that again", "session_id": q["session_id"]}, headers=AUTH).json()
+    assert r["next"] == "reply" and r["say"] == "Are you sure?"
+    assert FakeTask.instances[-1].replies == []
+
+
+def test_im_done_after_anything_else_ends(client):
+    first = client.post("/talk", json={"text": "open maps"}, headers=AUTH).json()
+    for ending in ["I'm done", "No.", "That's all, thanks."]:
+        r = client.post("/talk", json={"text": ending, "session_id": first["session_id"]}, headers=AUTH).json()
+        assert r["say"] == "Okay, talk soon." and r["next"] == "done"
+
+
+def test_thanks_after_finished_task_ends(client):
+    first = client.post("/talk", json={"text": "open maps"}, headers=AUTH).json()
+    for thanks in ["thanks", "Thank you!", "thank you so much", "Okay, thanks."]:
+        r = client.post("/talk", json={"text": thanks, "session_id": first["session_id"]}, headers=AUTH).json()
+        assert r["say"] == "Okay, talk soon." and r["next"] == "done"
+    assert len(FakeTask.instances) == 1
+
+
+def test_new_request_replaces_running_task(client):
+    r = client.post("/talk", json={"text": "slow task"}, headers=AUTH).json()
+    old = FakeTask.instances[-1]
+    r2 = client.post("/talk", json={"text": "open maps", "session_id": r["session_id"]}, headers=AUTH).json()
+    assert old.stopped
+    assert r2["say"] == "Did: open maps Anything else?" and r2["next"] == "more"
+    assert r2["session_id"] != r["session_id"]
+
+
+def test_check_ins_while_running_dont_replace_the_task(client):
+    """Silence, a re-sent request, a stale yes, 'okay', 'thanks' are not new requests."""
+    r = client.post("/talk", json={"text": "slow task"}, headers=AUTH).json()
+    for text in ["", "Slow task.", "yes", "okay", "thanks", "no"]:
+        r2 = client.post("/talk", json={"text": text, "session_id": r["session_id"]}, headers=AUTH).json()
+        assert r2["next"] == "wait", text
+    assert len(FakeTask.instances) == 1 and not FakeTask.instances[0].stopped
+
+
+def test_new_request_after_timeout_still_starts(client):
+    r = client.post("/talk", json={"text": "slow task"}, headers=AUTH).json()
+    server._started[r["session_id"]] -= 1000
+    r2 = client.post("/talk", json={"text": "", "session_id": r["session_id"]}, headers=AUTH).json()
+    assert r2["say"] == server.TOO_LONG
+    r3 = client.post("/talk", json={"text": "open maps", "session_id": r["session_id"]}, headers=AUTH).json()
+    assert r3["say"] == "Did: open maps Anything else?"
+
+
+def test_short_utterances_never_dial_911():
+    from relay import safety
+    for text in ["nine", "one", "nine one", "nein", "call", "help", "call mom", "9", "91"]:
+        assert not safety.is_emergency(text), text
+    for text in ["call 911", "nine one one", "9 1 1"]:
+        assert safety.is_emergency(text), text
