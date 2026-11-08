@@ -35,6 +35,8 @@ APP_PACKAGES = {
     "photos": "com.google.android.apps.photos",
     "google maps": "com.google.android.apps.maps",
     "spotify": "com.spotify.music",
+    "youtube music": "com.google.android.apps.youtube.music",
+    "yt music": "com.google.android.apps.youtube.music",
     "snapchat": "com.snapchat.android",
     "tiktok": "com.zhiliaoapp.musically",
     "uber": "com.ubercab",
